@@ -78,7 +78,7 @@ def visualize(env, ax=None, timestep=0, speed=1):
         return fig, ax
 
 
-def render(env, timesteps, speed=1):
+def render(env, timesteps, speed=1, step_fn=None):
     """
     Renders an animation of the environment over a series of timesteps.
 
@@ -86,6 +86,8 @@ def render(env, timesteps, speed=1):
     - env: Environment object containing road and vehicle data
     - timesteps: Number of timesteps to animate
     - speed: Speed multiplier for animation
+    - step_fn: A custom step function to be called at each timestep, e.g.
+               lambda env, t: env.small_step(None)
     """
     # Create a figure and axis for the animation
     fig, ax = plt.subplots(figsize=(20, 5))
@@ -94,8 +96,15 @@ def render(env, timesteps, speed=1):
         """
         Update function for each frame of the animation.
         """
-        env.step(None)  # Update environment state
+        if step_fn is not None:
+            step_fn(env, frame)
+        else:
+            env.small_step(None)  # Default behavior
+
         visualize(env, ax=ax, timestep=frame, speed=speed)
+
+        if env.finished:
+            ani.event_source.stop()
 
     # Create the animation
     ani = animation.FuncAnimation(
