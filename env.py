@@ -1,29 +1,11 @@
 from typing import Any, List, Literal, Union
-
 import numpy as np
 from tqdm import tqdm
 from scipy.stats import truncnorm
-
 from render import render
 
 
-class MarkovTransitionModel:
-    def __init__(self, states: List[Any], random_state=None):
-        self.states = states
-        self.num_states = len(states)
-        self.transition_matrix = np.full(
-            (self.num_states, self.num_states), 1 / self.num_states
-        )
-        self.random = random_state or np.random  # Use provided random state or default
-        self.value = self.random.choice(self.states)
-
-    def step(self) -> Any:
-        current = self.states.index(self.value)
-        next_state = self.random.choice(self.states, p=self.transition_matrix[current])
-        self.value = next_state
-        return next_state
-
-
+# Utility Functions
 def zipf(num_items, alpha) -> np.ndarray:
     """
     Generate a Zipf distribution for the given number of items and alpha parameter.
@@ -76,7 +58,34 @@ def compute_data_rate(
     return data_rate
 
 
+# Models
+class MarkovTransitionModel:
+    """
+    A Markov Transition Model for state transitions.
+    """
+
+    def __init__(self, states: List[Any], random_state=None):
+        self.states = states
+        self.num_states = len(states)
+        self.transition_matrix = np.full(
+            (self.num_states, self.num_states), 1 / self.num_states
+        )
+        self.random = random_state or np.random  # Use provided random state or default
+        self.value = self.random.choice(self.states)
+
+    def step(self) -> Any:
+        current = self.states.index(self.value)
+        next_state = self.random.choice(self.states, p=self.transition_matrix[current])
+        self.value = next_state
+        return next_state
+
+
+# Environment Class
 class Environment:
+    """
+    Main environment class for simulating vehicle mobility and content delivery.
+    """
+
     def __init__(
         self,
         dt: float = 0.1,
@@ -207,6 +216,7 @@ class Environment:
         self.i2i_cost = i2i_cost
         self.i2n_cost = i2n_cost
 
+    # Initialization Methods
     def reset(self) -> None:
         """
         Reset the environment, including content library and mobility model.
@@ -218,13 +228,81 @@ class Environment:
         self.set_states()
         self.update_mask()
 
+    def reset_request(self) -> None:
+        """
+        Reset and assign requests matrix.
+        """
+        # Update the Zipf alpha parameter
+        self.alpha.step()
+
+        # Sort content library by the requests frequency
+        sorted_indices = np.argsort(self.requests_frequency)[::-1]
+
+        # Generate requests probabilities from Zipf distribution
+        self.requests_probs = zipf(self.num_items, self.alpha.value)[sorted_indices]
+
+        # Sample the requests matrix
+        self.requests_matrix = np.zeros((self.num_vehicles, self.num_items))
+        for i in range(self.num_vehicles):
+            self.requests_matrix[
+                i, self.np_random.choice(self.num_items, size=1, p=self.requests_probs)
+            ] = 1
+
+        # Update the requests frequency
+        self.requests_frequency = np.sum(self.requests_matrix, axis=0)
+        self.cache = self.np_random.randint(
+            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        )
+
+        self.task_done = np.zeros(self.num_vehicles)
+        self.collected = np.zeros(self.num_vehicles)
+        self.delay = np.zeros(self.num_vehicles)
+        self.cost = np.zeros(self.num_vehicles)
+
+    def reset_mobility(self, sigma: float = 0.5) -> None:
+        """
+        Reset and assign positions and velocities of vehicles.
+        Args:
+            sigma (float): Standard deviation for velocity distribution.
+        """
+        # Generate random x-coordinates for vehicles within the road length
+        x = self.np_random.uniform(0, self.road_length, self.num_vehicles)
+
+        # Calculate y-coordinates based on lane indices and lane spacing
+        lane_indices = self.np_random.randint(0, self.num_lanes, size=self.num_vehicles)
+        self.direction = np.where(lane_indices < self.num_lanes / 2, -1, 1)
+        y = lane_indices * self.distance_between_lanes + self.distance_between_lanes / 2
+
+        # Assign positions
+        self.positions = np.column_stack((x, y))
+
+        # Compute the mean velocity
+        mu = (self.vmin + self.vmax) / 2
+
+        # Generate random velocities using truncated Gaussian distribution
+        a, b = (self.vmin - mu) / sigma, (self.vmax - mu) / sigma
+        self.velocities = truncnorm.rvs(
+            a,
+            b,
+            loc=mu,
+            scale=sigma,
+            size=self.num_vehicles,
+            random_state=self.np_random,
+        )
+
+        # update the mobility status based on the initial positions
+        self.update_mobility_status()
+
+    # State Management
     def set_states(self) -> None:
         """
         Set the states of the environment.
         """
         self.state = np.concatenate(
             [
-                self.positions.flatten(),  # self.num_vehicles * 2
+                self.vehicle_distance.flatten(),  # self.num_vehicles * self.num_vehicles
+                self.bs_distance.flatten(),  # self.num_vehicles
+                self.local_edge_distance.flatten(),  # self.num_vehicles
                 self.requests_matrix.flatten(),  # self.num_vehicles * self.num_items
                 self.cache.flatten(),  # (self.self.num_edges + self.num_vehicles) * self.num_items
                 self.item_size.flatten(),  # self.num_items
@@ -290,71 +368,77 @@ class Environment:
             # if v2v is not available, force disable v2v
             self.delivery_mask[vehicle_index, 1] = -1
 
-    def reset_mobility(self, sigma: float = 0.5) -> None:
+    # Mobility Updates
+    def update_mobility_status(self) -> None:
         """
-        Reset and assign positions and velocities of vehicles.
+        Update mobility status based on the current positions of vehicles.
+        """
+        # Check if vehicles are out of the road
+        self.out = np.where(
+            (self.positions[:, 0] > self.road_length) | (self.positions[:, 0] < 0), 1, 0
+        )
+
+        # Extract x-coordinates
+        vehicle_x = self.positions[:, 0]
+        segment_length = self.road_length / self.num_edges
+
+        # Compute edge indices
+        edge_indices = (vehicle_x / segment_length).astype(int)
+        edge_indices = np.clip(edge_indices, 0, self.num_edges - 1)  # ensure bounds
+
+        # Initialize with -1 for all vehicles
+        self.local_of = np.full(self.num_vehicles, -1, dtype=int)
+
+        # Assign valid edge index only to in-bound vehicles
+        in_bound_mask = self.out == 0
+        self.local_of[in_bound_mask] = edge_indices[in_bound_mask]
+
+        # Pre-compute local edge distances
+        self.local_edge_distance = np.linalg.norm(
+            self.positions - self.edge_positions[self.local_of.astype(int)], axis=1
+        )
+
+        # Mask out-of-bounds vehicles
+        self.local_edge_distance[self.out == 1] = np.inf
+
+        # Pre-compute BS distances (broadcasted subtraction)
+        self.bs_distance = np.linalg.norm(self.positions - self.bs_positions, axis=1)
+
+        # Compute pairwise vehicle distances (efficient with broadcasting)
+        diff = (
+            self.positions[:, np.newaxis, :] - self.positions[np.newaxis, :, :]
+        )  # shape: (N, N, 2)
+
+        self.vehicle_distance = np.linalg.norm(diff, axis=2)
+
+        # Set diagonal to zero (distance to self)
+        np.fill_diagonal(self.vehicle_distance, 0.0)
+
+    def step_velocity(self, sigma: float = 0.5) -> None:
+        """
+        Update the velocities of vehicles using a truncated Gaussian distribution.
         Args:
             sigma (float): Standard deviation for velocity distribution.
         """
-        # Generate random x-coordinates for vehicles within the road length
-        x = self.np_random.uniform(0, self.road_length, self.num_vehicles)
+        vt_next = np.zeros(self.num_vehicles)
 
-        # Calculate y-coordinates based on lane indices and lane spacing
-        lane_indices = self.np_random.randint(0, self.num_lanes, size=self.num_vehicles)
-        self.direction = np.where(lane_indices < self.num_lanes / 2, -1, 1)
-        y = lane_indices * self.distance_between_lanes + self.distance_between_lanes / 2
+        for i in range(self.num_vehicles):
+            mu = self.velocities[i]
+            a, b = (self.vmin - mu) / sigma, (self.vmax - mu) / sigma
+            vt_next[i] = truncnorm.rvs(
+                a, b, loc=mu, scale=sigma, random_state=self.np_random
+            )
 
-        # Assign positions
-        self.positions = np.column_stack((x, y))
+        self.velocities = vt_next
 
-        # Compute the mean velocity
-        mu = (self.vmin + self.vmax) / 2
-
-        # Generate random velocities using truncated Gaussian distribution
-        a, b = (self.vmin - mu) / sigma, (self.vmax - mu) / sigma
-        self.velocities = truncnorm.rvs(
-            a,
-            b,
-            loc=mu,
-            scale=sigma,
-            size=self.num_vehicles,
-            random_state=self.np_random,
-        )
-
-        # update the mobility status based on the initial positions
+    def step_position(self) -> None:
+        """
+        Update the positions of vehicles based on their velocities and direction.
+        """
+        self.positions[:, 0] += self.velocities * self.dt * self.direction
         self.update_mobility_status()
 
-    def reset_request(self) -> None:
-        """
-        Reset and assign requests matrix.
-        """
-        # Update the Zipf alpha parameter
-        self.alpha.step()
-
-        # Sort content library by the requests frequency
-        sorted_indices = np.argsort(self.requests_frequency)[::-1]
-
-        # Generate requests probabilities from Zipf distribution
-        self.requests_probs = zipf(self.num_items, self.alpha.value)[sorted_indices]
-
-        # Sample the requests matrix
-        self.requests_matrix = np.zeros((self.num_vehicles, self.num_items))
-        for i in range(self.num_vehicles):
-            self.requests_matrix[
-                i, self.np_random.choice(self.num_items, size=1, p=self.requests_probs)
-            ] = 1
-
-        # Update the requests frequency
-        self.requests_frequency = np.sum(self.requests_matrix, axis=0)
-        self.cache = self.np_random.randint(
-            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
-        )
-
-        self.task_done = np.zeros(self.num_vehicles)
-        self.collected = np.zeros(self.num_vehicles)
-        self.delay = np.zeros(self.num_vehicles)
-        self.cost = np.zeros(self.num_vehicles)
-
+    # Simulation Steps
     def small_step(self, actions: np.ndarray) -> None:
         """
         Perform a small time step by updating vehicle velocities, positions, and managing content delivery.
@@ -630,76 +714,11 @@ class Environment:
             0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
         )
 
-    def update_mobility_status(self) -> None:
-        """
-        Update mobility status based on the current positions of vehicles.
-        """
-        # Check if vehicles are out of the road
-        self.out = np.where(
-            (self.positions[:, 0] > self.road_length) | (self.positions[:, 0] < 0), 1, 0
-        )
 
-        # Extract x-coordinates
-        vehicle_x = self.positions[:, 0]
-        segment_length = self.road_length / self.num_edges
-
-        # Compute edge indices
-        edge_indices = (vehicle_x / segment_length).astype(int)
-        edge_indices = np.clip(edge_indices, 0, self.num_edges - 1)  # ensure bounds
-
-        # Initialize with -1 for all vehicles
-        self.local_of = np.full(self.num_vehicles, -1, dtype=int)
-
-        # Assign valid edge index only to in-bound vehicles
-        in_bound_mask = self.out == 0
-        self.local_of[in_bound_mask] = edge_indices[in_bound_mask]
-
-        # Pre-compute local edge distances
-        self.local_edge_distance = np.linalg.norm(
-            self.positions - self.edge_positions[self.local_of.astype(int)], axis=1
-        )
-
-        # Pre-compute BS distances (broadcasted subtraction)
-        self.bs_distance = np.linalg.norm(self.positions - self.bs_positions, axis=1)
-
-        # Compute pairwise vehicle distances (efficient with broadcasting)
-        diff = (
-            self.positions[:, np.newaxis, :] - self.positions[np.newaxis, :, :]
-        )  # shape: (N, N, 2)
-
-        self.vehicle_distance = np.linalg.norm(diff, axis=2)
-
-        # Set diagonal to zero (distance to self)
-        np.fill_diagonal(self.vehicle_distance, 0.0)
-
-    def step_velocity(self, sigma: float = 0.5) -> None:
-        """
-        Update the velocities of vehicles using a truncated Gaussian distribution.
-        Args:
-            sigma (float): Standard deviation for velocity distribution.
-        """
-        vt_next = np.zeros(self.num_vehicles)
-
-        for i in range(self.num_vehicles):
-            mu = self.velocities[i]
-            a, b = (self.vmin - mu) / sigma, (self.vmax - mu) / sigma
-            vt_next[i] = truncnorm.rvs(
-                a, b, loc=mu, scale=sigma, random_state=self.np_random
-            )
-
-        self.velocities = vt_next
-
-    def step_position(self) -> None:
-        """
-        Update the positions of vehicles based on their velocities and direction.
-        """
-        self.positions[:, 0] += self.velocities * self.dt * self.direction
-        self.update_mobility_status()
-
-
+# Main Execution
 if __name__ == "__main__":
     env = Environment(
-        num_vehicles=300,
+        num_vehicles=40,
         num_edges=4,
         num_items=100,
         item_size_max=500,
