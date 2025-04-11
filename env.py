@@ -1,8 +1,16 @@
 from typing import Any, List, Literal, Union
 import numpy as np
+import torch
 from tqdm import tqdm
 from scipy.stats import truncnorm
-from render import render
+from ppo import PPO
+
+from torch.utils.tensorboard import SummaryWriter
+
+import datetime
+
+current = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+writer = SummaryWriter(log_dir=f"runs/ppo_{current}")
 
 
 # Utility Functions
@@ -100,18 +108,18 @@ class Environment:
         vmax: float = 12.0,
         item_size_max: float = 500,
         item_size_min: float = 50,
-        code_size: float = 512 * 1024 * 8,
-        delivery_deadline_max: float = 300,
-        delivery_deadline_min: float = 50,
+        code_size: float = 32 * 1024 * 8,
+        delivery_deadline_max: float = 2000,
+        delivery_deadline_min: float = 100,
         edge_capacity: float = 2 * 1024,
         edge_cost: float = 1,
-        vehicle_capacity: float = 0.5 * 1024,
+        vehicle_capacity: float = 1 * 1024,
         vehicle_cost: float = 3,
         v2i_pc5_coverage: float = 500,
         v2i_wifi_coverage: float = 100,
         v2v_pc5_coverage: float = 100,
         v2n_bandwidth_max: float = 100e6,
-        v2n_bandwidth: float = 0.5e6,
+        v2n_bandwidth: float = 0.5 * 1e6,
         v2v_bandwidth_max: float = 20e6,
         v2v_bandwidth: float = 1e6,
         v2i_pc5_bandwidth_max: float = 20e6,
@@ -126,11 +134,13 @@ class Environment:
         v2i_pc5_transmission_power: float = 33,
         v2i_wifi_transmission_power: float = 25,
         v2v_transmission_power: float = 30,
-        noise_power: float = -90,
+        noise_power: float = -114,
         i2i_data_rate: float = 150e6,
         i2n_data_rate: float = 100e6,
         i2i_cost: float = 0.3,
         i2n_cost: float = 8,
+        delay_weight: float = 0.5,
+        cost_weight: float = 0.5,
     ):
         # Main parameters
         self.dt = dt
@@ -184,7 +194,7 @@ class Environment:
         )
 
         # BS parameters
-        self.bs_positions = (self.road_length / 2, 2000)
+        self.bs_positions = (self.road_length / 2, self.road_width / 2)
 
         #
         self.edge_capacity = edge_capacity
@@ -215,6 +225,8 @@ class Environment:
         self.i2n_data_rate = i2n_data_rate
         self.i2i_cost = i2i_cost
         self.i2n_cost = i2n_cost
+        self.delay_weight = delay_weight
+        self.cost_weight = cost_weight
 
     # Initialization Methods
     def reset(self) -> None:
@@ -225,8 +237,8 @@ class Environment:
         self.done = False
         self.reset_request()
         self.reset_mobility()
-        self.set_states()
         self.update_mask()
+        self.set_states()
 
     def reset_request(self) -> None:
         """
@@ -253,6 +265,9 @@ class Environment:
         self.cache = self.np_random.randint(
             0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
         )
+        # self.cache = np.ones((self.num_edges + self.num_vehicles, self.num_items))
+
+        self.requested = np.argmax(self.requests_matrix, axis=1)
 
         self.task_done = np.zeros(self.num_vehicles)
         self.collected = np.zeros(self.num_vehicles)
@@ -298,31 +313,45 @@ class Environment:
         """
         Set the states of the environment.
         """
+        self.connection_status = np.zeros((self.num_vehicles, 3))
+        self.connection_status[:, 0] = self.delivery_mask[:, 1]
+
+        in_bound_mask = self.out == 0
+        requested_items = self.requested[in_bound_mask]
+        local_edges = self.local_of[in_bound_mask]
+
+        # Check if the local edge has the requested item
+        has_item_local = self.cache[local_edges, requested_items] == 1
+        self.connection_status[in_bound_mask, 1] = has_item_local.astype(int)
+
+        # Check if any edge has the requested item
+        has_item_any_edge = (
+            np.sum(self.cache[: self.num_edges, requested_items], axis=0) > 0
+        )
+        self.connection_status[in_bound_mask, 2] = has_item_any_edge.astype(int)
+
+        remaining_deadline = np.where(
+            self.task_done == 1,
+            0,
+            self.delivery_deadline[self.requested].flatten() - self.steps,
+        )
+        remaining_segments = np.where(
+            self.task_done == 1,
+            0,
+            (self.num_code_min[self.requested] - self.collected).flatten(),
+        )
+        task_done_status = self.task_done.flatten()
+        connection_status = self.connection_status.flatten()
+
         self.state = np.concatenate(
             [
-                self.vehicle_distance.flatten(),  # self.num_vehicles * self.num_vehicles
-                self.bs_distance.flatten(),  # self.num_vehicles
-                self.local_edge_distance.flatten(),  # self.num_vehicles
-                self.requests_matrix.flatten(),  # self.num_vehicles * self.num_items
-                self.cache.flatten(),  # (self.self.num_edges + self.num_vehicles) * self.num_items
-                self.item_size.flatten(),  # self.num_items
-                (
-                    self.delivery_deadline - self.steps
-                ).flatten(),  # self.num_items (the remaining deadline)
-                (
-                    self.num_code_min[np.argmax(self.requests_matrix, axis=1)]
-                    - self.collected
-                ).flatten(),  # self.num_vehicles
+                connection_status,
+                remaining_deadline,
+                task_done_status,
+                remaining_segments,
             ]
         )
-        self.state_dim = (
-            self.num_vehicles * 2
-            + self.num_vehicles * self.num_items
-            + (self.num_edges + self.num_vehicles) * self.num_items
-            + self.num_items
-            + self.num_items
-            + self.num_vehicles
-        )
+        self.state_dim = self.state.shape[0]
 
     def update_mask(self) -> None:
         """
@@ -351,6 +380,7 @@ class Environment:
 
         # if any nearby vehicle has the requested item and in communication range
         for vehicle_index in range(self.num_vehicles):
+            any_car = False
             for nearby_vehicle_index in range(self.num_vehicles):
                 if (
                     vehicle_index != nearby_vehicle_index  # ignore self
@@ -363,10 +393,15 @@ class Environment:
                     == 1  # check if the nearby vehicle has the requested item
                 ):
                     # if v2v is available, break the loop
+                    any_car = True
                     break
 
-            # if v2v is not available, force disable v2v
-            self.delivery_mask[vehicle_index, 1] = -1
+            if not any_car:
+                # if v2v is not available, force disable v2v
+                self.delivery_mask[vehicle_index, 1] = -1
+
+        # turn off the action mask for vehicles that have already satisfied their requests
+        self.delivery_mask[self.task_done == 1, :] = -1
 
     # Mobility Updates
     def update_mobility_status(self) -> None:
@@ -399,7 +434,7 @@ class Environment:
         )
 
         # Mask out-of-bounds vehicles
-        self.local_edge_distance[self.out == 1] = np.inf
+        self.local_edge_distance[self.out == 1] = -1
 
         # Pre-compute BS distances (broadcasted subtraction)
         self.bs_distance = np.linalg.norm(self.positions - self.bs_positions, axis=1)
@@ -448,8 +483,17 @@ class Environment:
         # increment the step counter
         self.steps += 1
 
-        # create a dummy action
-        actions = self.np_random.randint(0, 2, size=(self.num_vehicles, self.num_rats))
+        # actions = np.ones((self.num_vehicles, self.num_rats))
+
+        # initialize the cost and delay for the current step
+        new_cost = np.zeros(self.num_vehicles)
+        new_delay = np.zeros(self.num_vehicles)
+        new_collected = np.zeros(self.num_vehicles)
+        reward = 0
+
+        # convert torch tensor to numpy array
+        if isinstance(actions, torch.Tensor):
+            actions = actions.cpu().numpy()
 
         for vehicle_index in range(self.num_vehicles):
             # get the requested item index
@@ -459,28 +503,24 @@ class Environment:
             if self.task_done[vehicle_index] == 1:
                 continue
 
+            new_delay[vehicle_index] = self.dt
+
             # download with v2n
             if actions[vehicle_index, 0] == 1:
                 # compute the distance from the vehicle to the BS
                 distance = self.bs_distance[vehicle_index]
 
                 # compute v2n data rate with macro path loss model
-                data_rate = compute_data_rate(
-                    allocated_spectrum=self.v2n_bandwidth,
-                    transmission_power=self.v2n_transmission_power,
-                    noise_power=self.noise_power,
-                    distance=distance,
-                    path_loss_model="macro",
-                )
+                data_rate = 6e6  # 6Mbps
 
                 # compute the number of segments that can be transfered
-                v2n_transfered_segment = np.ceil(data_rate * self.dt / self.code_size)
+                v2n_transfered_segment = np.floor(data_rate * self.dt / self.code_size)
 
                 # accumulate the collected segments
-                self.collected[vehicle_index] += v2n_transfered_segment
+                new_collected[vehicle_index] = v2n_transfered_segment
 
                 # accumulate the cost
-                self.cost[vehicle_index] += (
+                new_cost[vehicle_index] = (
                     self.v2n_cost * v2n_transfered_segment * self.code_size
                 )
 
@@ -532,15 +572,15 @@ class Environment:
                     )
 
                     # compute the number of segments that can be transfered
-                    v2v_transfered_segment = np.ceil(
+                    v2v_transfered_segment = np.floor(
                         data_rate * self.dt / self.code_size
                     )
 
                     # accumulate the collected segments
-                    self.collected[vehicle_index] += v2v_transfered_segment
+                    new_collected[vehicle_index] = v2v_transfered_segment
 
                     # accumulate the cost
-                    self.cost[vehicle_index] += (
+                    new_cost[vehicle_index] = (
                         self.v2n_cost * v2v_transfered_segment * self.code_size
                     )
 
@@ -561,12 +601,12 @@ class Environment:
                 # check if the edge has the requested item
                 if self.cache[int(self.local_of[vehicle_index]), requested_item] == 1:
                     # compute the number of segments that can be transfered directly from the local edge
-                    v2i_pc5_transfered_segment = np.ceil(
+                    v2i_pc5_transfered_segment = np.floor(
                         data_rate * self.dt / self.code_size
                     )
 
                     # accumulate the collected segments
-                    self.cost[vehicle_index] += (
+                    new_cost[vehicle_index] = (
                         self.v2i_pc5_cost * v2i_pc5_transfered_segment * self.code_size
                     )
 
@@ -585,7 +625,7 @@ class Environment:
 
                     # if there is a neighbor edge that has the requested item
                     if hop_distance < 99:
-                        v2i_pc5_transfered_segment = np.ceil(
+                        v2i_pc5_transfered_segment = np.floor(
                             self.dt
                             * self.i2i_data_rate
                             / (
@@ -594,23 +634,23 @@ class Environment:
                             )
                         )
                         # accumulate the cost
-                        self.cost[vehicle_index] += (
+                        new_cost[vehicle_index] = (
                             self.i2i_cost * v2i_pc5_transfered_segment * self.code_size
                         )
                     # if there is no neighbor edge that has the requested item, use backhaul link
                     else:
-                        v2i_pc5_transfered_segment = np.ceil(
+                        v2i_pc5_transfered_segment = np.floor(
                             self.dt
                             * self.i2n_data_rate
                             / (self.code_size * (data_rate + self.i2n_data_rate))
                         )
                         # accumulate the cost
-                        self.cost[vehicle_index] += (
+                        new_cost[vehicle_index] = (
                             self.i2n_cost * v2i_pc5_transfered_segment * self.code_size
                         )
 
                 # accumulate the collected segments
-                self.collected[vehicle_index] += v2i_pc5_transfered_segment
+                new_collected[vehicle_index] = v2i_pc5_transfered_segment
 
             # download with v2i wifi and vehicle is not out of the road
             if actions[vehicle_index, 3] == 1 and self.out[vehicle_index] == 0:
@@ -633,12 +673,12 @@ class Environment:
                         == 1
                     ):
                         # compute the number of segments that can be transfered directly from the local edge
-                        v2i_wifi_transfered_segment = np.ceil(
+                        v2i_wifi_transfered_segment = np.floor(
                             data_rate * self.dt / self.code_size
                         )
 
                         # accumulate the collected segments
-                        self.cost[vehicle_index] += (
+                        new_cost[vehicle_index] = (
                             self.v2i_wifi_cost
                             * v2i_wifi_transfered_segment
                             * self.code_size
@@ -659,7 +699,7 @@ class Environment:
 
                         # if there is a neighbor edge that has the requested item
                         if hop_distance < 99:
-                            v2i_wifi_transfered_segment = np.ceil(
+                            v2i_wifi_transfered_segment = np.floor(
                                 self.dt
                                 * self.i2i_data_rate
                                 / (
@@ -668,20 +708,20 @@ class Environment:
                                 )
                             )
                             # accumulate the cost
-                            self.cost[vehicle_index] += (
+                            new_cost[vehicle_index] = (
                                 self.i2i_cost
                                 * v2i_wifi_transfered_segment
                                 * self.code_size
                             )
                         # if there is no neighbor edge that has the requested item, use backhaul link
                         else:
-                            v2i_wifi_transfered_segment = np.ceil(
+                            v2i_wifi_transfered_segment = np.floor(
                                 self.dt
                                 * self.i2n_data_rate
                                 / (self.code_size * (data_rate + self.i2n_data_rate))
                             )
                             # accumulate the cost
-                            self.cost[vehicle_index] += (
+                            new_cost[vehicle_index] = (
                                 self.i2n_cost
                                 * v2i_wifi_transfered_segment
                                 * self.code_size
@@ -690,7 +730,24 @@ class Environment:
             # check if the vehicle has collected all the requested items
             if self.collected[vehicle_index] > self.num_code_min[requested_item]:
                 self.task_done[vehicle_index] = 1
-                self.delay[vehicle_index] = self.steps * self.dt
+                total_collected = (
+                    self.collected[vehicle_index] + new_collected[vehicle_index]
+                )
+                total_cost = self.cost[vehicle_index] + new_cost[vehicle_index]
+                total_delay = self.delay[vehicle_index] + new_delay[vehicle_index]
+
+                per_bit_cost = total_cost / (total_collected * self.code_size)
+                per_segment_delay = total_delay / total_collected * 1e3  # in ms
+
+                reward = -(
+                    self.delay_weight * per_segment_delay
+                    + self.cost_weight * per_bit_cost
+                )
+
+        # accumulate the cost and delay
+        self.cost += new_cost
+        self.delay += new_delay
+        self.collected += new_collected
 
         # check if all vehicles are done
         self.done = np.sum(self.task_done) == self.num_vehicles
@@ -698,47 +755,115 @@ class Environment:
         # update the mobility model
         self.step_velocity()
         self.step_position()
-        self.set_states()
         self.update_mask()
+        self.set_states()
 
-        return None, None, self.done, None
-
-    def large_step(self, actions: np.ndarray) -> None:
-        """
-        Perform a large time step by updating the cache status based on content caching actions.
-        Args:
-            actions (np.ndarray): Caching actions taken by the system.
-        """
-        # create a dummy action
-        actions = self.np_random.randint(
-            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        return (
+            self.state,
+            reward,
+            self.done,
+            {},
         )
 
 
 # Main Execution
 if __name__ == "__main__":
+    num_vehicles = 40
+    num_edges = 4
+    num_items = 50
+
     env = Environment(
-        num_vehicles=40,
-        num_edges=4,
-        num_items=100,
-        item_size_max=500,
-        item_size_min=50,
+        num_vehicles=num_vehicles,
+        num_edges=num_edges,
+        num_items=num_items,
+        item_size_max=100,
+        item_size_min=10,
         seed=123,
+        delay_weight=0.5,
+        cost_weight=0.5,
     )
+
     env.reset()
 
-    for t in tqdm(range(3000)):
-        actions = None  # You could have a policy here
-        next_state, reward, done, _ = env.small_step(actions)
-        if done:
-            print(f"Stopped at timestep {t}")
-            break
+    ppo = PPO(
+        state_dim=env.state_dim,
+        num_action=num_vehicles,
+        action_dim=4,
+        actor_hidden_dim=128,
+        critic_hidden_dim=128,
+        actor_lr=0.001,
+        critic_lr=0.01,
+        num_epoch=5,
+        writer=writer,
+    )
 
-    print(
-        "Avg Delay per segment (ms):",
-        np.round(np.mean(env.delay * 1e3 / env.collected), 4),
-    )
-    print(
-        "Avg Cost per bit (cost unit):",
-        np.round(np.mean(env.cost / (env.collected * env.code_size)), 2),
-    )
+    # Initialize the environment
+    state = env.state
+    mask = env.delivery_mask
+    max_steps = 10000
+    episode = 500
+    steps = 0
+
+    for episode in tqdm(range(episode)):
+        accumulated_reward = 0
+        for step in tqdm(range(max_steps)):
+            # convert to tensor
+            state_tensor = torch.tensor(env.state, dtype=torch.float32)
+            mask_tensor = torch.tensor(env.delivery_mask, dtype=torch.float32)
+
+            action, log_prob, value = ppo.act(state_tensor, mask_tensor)
+
+            next_state, reward, done, info = env.small_step(action)
+
+            accumulated_reward += reward
+
+            reward_tensor = torch.tensor(reward, dtype=torch.float32)
+
+            ppo.add(
+                state_tensor,
+                mask_tensor,
+                action,
+                log_prob,
+                value,
+                reward_tensor,
+                done,
+            )
+
+            if done:
+                break
+
+            steps += 1
+
+        writer.add_scalar(
+            "log/accumulated_reward",
+            accumulated_reward,
+            global_step=episode,
+        )
+
+        writer.add_scalar(
+            "log/avg_total_delay",
+            np.mean(env.delay),
+            global_step=episode,
+        )
+
+        writer.add_scalar(
+            "log/avg_total_cost",
+            np.mean(env.cost),
+            global_step=episode,
+        )
+
+        writer.add_scalar(
+            "log/avg_cost_per_bit",
+            np.mean(env.cost / (env.collected * env.code_size)),
+            global_step=episode,
+        )
+
+        writer.add_scalar(
+            "log/avg_delay_per_segment",
+            np.mean(env.delay / env.collected * 1e3),
+            global_step=episode,
+        )
+
+        ppo.update()
+        ppo.clear()
+        env.reset()

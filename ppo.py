@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from typing import *
-from gumbel_sigmoid import gumbel_sigmoid, sigmoid_log_prob
 
 
 class Actor(nn.Module):
@@ -129,9 +128,9 @@ class RolloutBuffer:
         self.dones = []
 
 
-class GumbelPPO:
+class PPO:
     """
-    Gumbel Proximal Policy Optimization (PPO) algorithm.
+    Proximal Policy Optimization (PPO) algorithm.
     Args:
         state_dim (int): Dimension of the state.
         num_action (int): Number of actions.
@@ -140,10 +139,10 @@ class GumbelPPO:
         critic_hidden_dim (int): Hidden dimension of the critic network.
         actor_lr (float): Learning rate for the actor network.
         critic_lr (float): Learning rate for the critic network.
-        num_epoch (int): Number of epochs to train per update.
-        eps (float): Epsilon for PPO clipping.
-        gumbel_temperature (float): Temperature for Gumbel sampling.
+        num_epoch (int): Number of epochs for training.
+        eps (float): Clipping parameter for PPO.
         gamma (float): Discount factor for rewards.
+        writer: TensorBoard writer for logging.
     """
 
     def __init__(
@@ -157,8 +156,8 @@ class GumbelPPO:
         critic_lr,
         num_epoch,
         eps=0.2,
-        gumbel_temperature=0.5,
         gamma=0.99,
+        writer=None,
     ):
         self.actor = Actor(state_dim, num_action, action_dim, actor_hidden_dim)
         self.critic = Critic(state_dim, num_action, action_dim, critic_hidden_dim)
@@ -171,8 +170,9 @@ class GumbelPPO:
         self.num_action = num_action
         self.action_dim = action_dim
         self.num_epoch = num_epoch
-        self.gumbel_temperature = gumbel_temperature
         self.eps = eps
+        self.writer = writer
+        self.current_step = 0
 
     def get_log_prob(self, states, masks, actions):
         """
@@ -187,10 +187,11 @@ class GumbelPPO:
         # Compute logits from the actor network
         logits = self.actor(states, masks)
 
-        # Compute log probabilities
-        log_probs = sigmoid_log_prob(logits, actions)
+        dist = torch.distributions.Bernoulli(logits=logits)
+        log_probs = dist.log_prob(actions)
+        entropy = dist.entropy()
 
-        return log_probs
+        return log_probs, entropy
 
     def act(self, state, mask):
         """
@@ -209,8 +210,9 @@ class GumbelPPO:
         # Compute logits from the actor network
         logits = self.actor(state, mask)
 
-        action = gumbel_sigmoid(logits, self.gumbel_temperature)
-        log_prob = sigmoid_log_prob(logits, action)
+        dist = torch.distributions.Bernoulli(logits=logits)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
 
         # Compute state-action value from the critic network
         value = self.critic(state, action)
@@ -260,7 +262,7 @@ class GumbelPPO:
 
         for _ in range(self.num_epoch):
             # Compute new log prob
-            new_log_probs = self.get_log_prob(states, masks, actions)
+            new_log_probs, entropy = self.get_log_prob(states, masks, actions)
 
             # Compute new action-state value
             new_values = self.critic(states, actions).squeeze(-1)
@@ -275,7 +277,9 @@ class GumbelPPO:
             surr2 = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * advantages
 
             # Compute actor loss
-            actor_loss = -torch.min(surr1, surr2).mean()
+            main_actor_loss = -torch.min(surr1, surr2).mean()
+            entropy_loss = -entropy.mean() * 0.01
+            actor_loss = main_actor_loss + entropy_loss
 
             # Compute critic loss
             critic_loss = F.mse_loss(new_values, returns)
@@ -289,64 +293,35 @@ class GumbelPPO:
             critic_loss.backward()
             self.critic_optimizer.step()
 
+            if self.writer is not None:
+                self.writer.add_scalar(
+                    "loss/actor_loss", actor_loss.item(), self.current_step
+                )
+                self.writer.add_scalar(
+                    "loss/entropy_loss", entropy_loss.item(), self.current_step
+                )
+                self.writer.add_scalar(
+                    "loss/critic_loss", critic_loss.item(), self.current_step
+                )
+
+            self.current_step += 1
+
     def clear(self):
         """
         Clear the buffer.
         """
         self.buffer.clear()
 
-
-if __name__ == "__main__":
-    state_dim = 10
-    num_rows = 2
-    num_cols = 5
-
-    output_dim = num_rows * num_cols
-    hidden_dim = 128
-
-    state = torch.rand(state_dim)
-    mask = torch.tensor([[1, -1, 0, 0, 0], [0, 0, 0, -1, 1]]).float()
-
-    ppo = GumbelPPO(
-        state_dim=state_dim,
-        num_action=num_rows,
-        action_dim=num_cols,
-        actor_hidden_dim=hidden_dim,
-        critic_hidden_dim=hidden_dim,
-        actor_lr=0.001,
-        critic_lr=0.001,
-        num_epoch=10,
-    )
-
-    num_episodes = 5
-    max_steps_per_episode = 1000
-
-    for episode in range(num_episodes):
-
-        # reset dummy environment
-        state = torch.rand(state_dim)
-        step = 0
-        done = False
-
-        while not done and step < max_steps_per_episode:
-            action, log_prob, value = ppo.act(state, mask)
-            reward = torch.rand(1)
-
-            done = True
-            ppo.buffer.add(
-                state,
-                mask,
-                action,
-                log_prob,
-                value,
-                reward,
-                done,
-            )
-
-            # Next state
-            state = torch.rand(state_dim)
-            step += 1
-
-        ppo.update()
-        ppo.clear()
-        print(f"Episode {episode + 1} finished.")
+    def add(self, state, mask, action, log_prob, values, reward, done):
+        """
+        Add a transition to the buffer.
+        Args:
+            state (torch.Tensor): Current state.
+            mask (torch.Tensor): Action mask.
+            action (torch.Tensor): Action taken.
+            log_prob (torch.Tensor): Log probability of the action.
+            values (torch.Tensor): State-action value.
+            reward (float): Reward received.
+            done (bool): Whether the episode is done.
+        """
+        self.buffer.add(state, mask, action, log_prob, values, reward, done)
