@@ -1,16 +1,7 @@
 from typing import Any, List, Literal, Union
 import numpy as np
 import torch
-from tqdm import tqdm
 from scipy.stats import truncnorm
-from ppo import PPO
-
-from torch.utils.tensorboard import SummaryWriter
-
-import datetime
-
-current = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-writer = SummaryWriter(log_dir=f"runs/ppo_{current}")
 
 
 # Utility Functions
@@ -109,7 +100,7 @@ class Environment:
         item_size_max: float = 500,
         item_size_min: float = 50,
         code_size: float = 32 * 1024 * 8,
-        delivery_deadline_max: float = 2000,
+        delivery_deadline_max: float = 300,
         delivery_deadline_min: float = 100,
         edge_capacity: float = 2 * 1024,
         edge_cost: float = 1,
@@ -134,7 +125,7 @@ class Environment:
         v2i_pc5_transmission_power: float = 33,
         v2i_wifi_transmission_power: float = 25,
         v2v_transmission_power: float = 30,
-        noise_power: float = -114,
+        noise_power: float = -174,
         i2i_data_rate: float = 150e6,
         i2n_data_rate: float = 100e6,
         i2i_cost: float = 0.3,
@@ -165,9 +156,11 @@ class Environment:
             * 1024
             * 8
         )
-        self.delivery_deadline = self.np_random.uniform(
+        self.delivery_deadline = self.np_random.randint(
             delivery_deadline_min, delivery_deadline_max, size=self.num_items
         )
+        self.delivery_deadline_max = delivery_deadline_max
+        self.delivery_deadline_min = delivery_deadline_min
         self.code_size = code_size
         self.num_code_min = np.ceil(self.item_size / self.code_size).astype(int)
 
@@ -262,10 +255,10 @@ class Environment:
 
         # Update the requests frequency
         self.requests_frequency = np.sum(self.requests_matrix, axis=0)
-        self.cache = self.np_random.randint(
-            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
-        )
-        # self.cache = np.ones((self.num_edges + self.num_vehicles, self.num_items))
+        # self.cache = self.np_random.randint(
+        #     0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        # )
+        self.cache = np.ones((self.num_edges + self.num_vehicles, self.num_items))
 
         self.requested = np.argmax(self.requests_matrix, axis=1)
 
@@ -308,13 +301,52 @@ class Environment:
         # update the mobility status based on the initial positions
         self.update_mobility_status()
 
+    def constraint_check(self, actions) -> None:
+        v2n_overload = max(
+            0, np.sum(actions[:, 0]) - self.v2n_bandwidth_max / self.v2n_bandwidth
+        )
+        v2v_overload = max(
+            0, np.sum(actions[:, 1]) - self.v2v_bandwidth_max / self.v2v_bandwidth
+        )
+        v2i_pc5_overload = 0
+        v2i_wifi_overload = 0
+
+        for edge_index in range(self.num_edges):
+            vehicle_indices = np.where(self.local_of == edge_index)[0]
+            v2i_pc5_overload += max(
+                0,
+                np.sum(actions[vehicle_indices, 2])
+                - self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth,
+            )
+            v2i_wifi_overload += max(
+                0,
+                np.sum(actions[vehicle_indices, 3])
+                - self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth,
+            )
+
+        remaining_time_allowance = np.where(
+            self.task_done == 0, self.delivery_deadline[self.requested] - self.steps, 0
+        )
+
+        deadline_overload = np.where(
+            remaining_time_allowance < 0, -remaining_time_allowance, 0
+        ).mean()
+
+        return [
+            float(v2n_overload),
+            float(v2v_overload),
+            float(v2i_pc5_overload),
+            float(v2i_wifi_overload),
+            float(deadline_overload),
+        ]
+
     # State Management
     def set_states(self) -> None:
         """
         Set the states of the environment.
         """
         self.connection_status = np.zeros((self.num_vehicles, 3))
-        self.connection_status[:, 0] = self.delivery_mask[:, 1]
+        self.connection_status[:, 0] = 1 - self.delivery_mask[:, 1, 1]
 
         in_bound_mask = self.out == 0
         requested_items = self.requested[in_bound_mask]
@@ -335,19 +367,16 @@ class Environment:
             0,
             self.delivery_deadline[self.requested].flatten() - self.steps,
         )
-        remaining_segments = np.where(
-            self.task_done == 1,
-            0,
-            (self.num_code_min[self.requested] - self.collected).flatten(),
-        )
-        task_done_status = self.task_done.flatten()
+
+        remaining_segments = (
+            self.collected / self.num_code_min[self.requested]
+        ).flatten() / self.delivery_deadline_max
         connection_status = self.connection_status.flatten()
 
         self.state = np.concatenate(
             [
                 connection_status,
                 remaining_deadline,
-                task_done_status,
                 remaining_segments,
             ]
         )
@@ -367,9 +396,6 @@ class Environment:
         requested_item = np.where(self.requests_matrix == 1)[1]
 
         # if vehicle request downloading is not satisfied within the deadline, force enable v2n
-        self.delivery_mask[
-            (self.delivery_deadline[requested_item] - self.steps) < 0, 0
-        ] = 1
 
         # if vehicle is out of the road, force disable v2i
         self.delivery_mask[self.out == 1, 2] = -1
@@ -402,6 +428,15 @@ class Environment:
 
         # turn off the action mask for vehicles that have already satisfied their requests
         self.delivery_mask[self.task_done == 1, :] = -1
+        mask_1 = np.where(self.delivery_mask == -1, 1, 0)
+        mask_0 = np.where(self.delivery_mask == 1, 1, 0)
+        self.delivery_mask = np.stack(
+            [
+                mask_0,
+                mask_1,
+            ],
+            axis=-1,
+        )
 
     # Mobility Updates
     def update_mobility_status(self) -> None:
@@ -511,7 +546,14 @@ class Environment:
                 distance = self.bs_distance[vehicle_index]
 
                 # compute v2n data rate with macro path loss model
-                data_rate = 6e6  # 6Mbps
+                data_rate = compute_data_rate(
+                    allocated_spectrum=self.v2n_bandwidth,
+                    transmission_power=self.v2n_transmission_power,
+                    noise_power=self.noise_power,
+                    distance=distance,
+                    path_loss_model="macro",
+                )
+                print(data_rate)
 
                 # compute the number of segments that can be transfered
                 v2n_transfered_segment = np.floor(data_rate * self.dt / self.code_size)
@@ -730,24 +772,19 @@ class Environment:
             # check if the vehicle has collected all the requested items
             if self.collected[vehicle_index] > self.num_code_min[requested_item]:
                 self.task_done[vehicle_index] = 1
-                total_collected = (
-                    self.collected[vehicle_index] + new_collected[vehicle_index]
-                )
-                total_cost = self.cost[vehicle_index] + new_cost[vehicle_index]
-                total_delay = self.delay[vehicle_index] + new_delay[vehicle_index]
-
-                per_bit_cost = total_cost / (total_collected * self.code_size)
-                per_segment_delay = total_delay / total_collected * 1e3  # in ms
-
-                reward = -(
-                    self.delay_weight * per_segment_delay
-                    + self.cost_weight * per_bit_cost
-                )
 
         # accumulate the cost and delay
         self.cost += new_cost
         self.delay += new_delay
         self.collected += new_collected
+
+        total_cost = new_cost.sum()
+        total_collected = new_collected.sum()
+
+        if total_cost != total_collected:
+            reward = total_collected / total_cost * 1e8
+        else:
+            reward = 0
 
         # check if all vehicles are done
         self.done = np.sum(self.task_done) == self.num_vehicles
@@ -758,112 +795,7 @@ class Environment:
         self.update_mask()
         self.set_states()
 
-        return (
-            self.state,
-            reward,
-            self.done,
-            {},
-        )
+        return (self.state, reward, self.done, self.constraint_check(actions))
 
 
 # Main Execution
-if __name__ == "__main__":
-    num_vehicles = 40
-    num_edges = 4
-    num_items = 50
-
-    env = Environment(
-        num_vehicles=num_vehicles,
-        num_edges=num_edges,
-        num_items=num_items,
-        item_size_max=100,
-        item_size_min=10,
-        seed=123,
-        delay_weight=0.5,
-        cost_weight=0.5,
-    )
-
-    env.reset()
-
-    ppo = PPO(
-        state_dim=env.state_dim,
-        num_action=num_vehicles,
-        action_dim=4,
-        actor_hidden_dim=128,
-        critic_hidden_dim=128,
-        actor_lr=0.001,
-        critic_lr=0.01,
-        num_epoch=5,
-        writer=writer,
-    )
-
-    # Initialize the environment
-    state = env.state
-    mask = env.delivery_mask
-    max_steps = 10000
-    episode = 500
-    steps = 0
-
-    for episode in tqdm(range(episode)):
-        accumulated_reward = 0
-        for step in tqdm(range(max_steps)):
-            # convert to tensor
-            state_tensor = torch.tensor(env.state, dtype=torch.float32)
-            mask_tensor = torch.tensor(env.delivery_mask, dtype=torch.float32)
-
-            action, log_prob, value = ppo.act(state_tensor, mask_tensor)
-
-            next_state, reward, done, info = env.small_step(action)
-
-            accumulated_reward += reward
-
-            reward_tensor = torch.tensor(reward, dtype=torch.float32)
-
-            ppo.add(
-                state_tensor,
-                mask_tensor,
-                action,
-                log_prob,
-                value,
-                reward_tensor,
-                done,
-            )
-
-            if done:
-                break
-
-            steps += 1
-
-        writer.add_scalar(
-            "log/accumulated_reward",
-            accumulated_reward,
-            global_step=episode,
-        )
-
-        writer.add_scalar(
-            "log/avg_total_delay",
-            np.mean(env.delay),
-            global_step=episode,
-        )
-
-        writer.add_scalar(
-            "log/avg_total_cost",
-            np.mean(env.cost),
-            global_step=episode,
-        )
-
-        writer.add_scalar(
-            "log/avg_cost_per_bit",
-            np.mean(env.cost / (env.collected * env.code_size)),
-            global_step=episode,
-        )
-
-        writer.add_scalar(
-            "log/avg_delay_per_segment",
-            np.mean(env.delay / env.collected * 1e3),
-            global_step=episode,
-        )
-
-        ppo.update()
-        ppo.clear()
-        env.reset()
