@@ -150,19 +150,20 @@ class Environment:
             1, 1000, size=self.num_items
         )  # Dummy requests frequency
 
-        self.item_size = (
+        self.delivery_deadline = self.np_random.randint(
+            delivery_deadline_min, delivery_deadline_max, size=self.num_items
+        )
+
+        self.delivery_deadline_max = delivery_deadline_max
+        self.delivery_deadline_min = delivery_deadline_min
+        self.code_size = code_size
+        self.num_code_min = np.ceil(
             self.np_random.randint(item_size_min, item_size_max, size=self.num_items)
             * 1024
             * 1024
             * 8
-        )
-        self.delivery_deadline = self.np_random.randint(
-            delivery_deadline_min, delivery_deadline_max, size=self.num_items
-        )
-        self.delivery_deadline_max = delivery_deadline_max
-        self.delivery_deadline_min = delivery_deadline_min
-        self.code_size = code_size
-        self.num_code_min = np.ceil(self.item_size / self.code_size).astype(int)
+            / self.code_size
+        ).astype(int)
 
         # Mobility model
         self.road_length = road_length
@@ -301,44 +302,89 @@ class Environment:
         # update the mobility status based on the initial positions
         self.update_mobility_status()
 
-    def constraint_check(self, actions) -> None:
-        v2n_overload = max(
-            0, np.sum(actions[:, 0]) - self.v2n_bandwidth_max / self.v2n_bandwidth
-        )
+    def greedy_projection(self, actions) -> None:  # num_vehicle x num_rats
+        # get the original device
+        device = actions.device
+
+        # convert to numpy array
+        actions = actions.numpy()
+
+        # reshape the actions to match the number of vehicles and rats
+        actions = actions.reshape((self.num_vehicles, self.num_rats))
+
+        # compute the v2v action overload
         v2v_overload = max(
             0, np.sum(actions[:, 1]) - self.v2v_bandwidth_max / self.v2v_bandwidth
         )
-        v2i_pc5_overload = 0
-        v2i_wifi_overload = 0
 
+        # drop v2v action of low priority vehicles
+        if v2v_overload > 0:
+            v2v_index = np.where(actions[:, 1] == 1)
+            priorities = np.argsort(
+                self.remaining_segments[v2v_index] / self.remaining_deadline[v2v_index]
+            )
+
+            while v2v_overload > 0:
+                actions[priorities[0], 1] = 0
+                v2v_overload -= 1
+                priorities = np.delete(priorities, 0)
+
+        # for each edge, check if the v2i pc5 and wifi actions are overloaded
         for edge_index in range(self.num_edges):
-            vehicle_indices = np.where(self.local_of == edge_index)[0]
-            v2i_pc5_overload += max(
-                0,
-                np.sum(actions[vehicle_indices, 2])
-                - self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth,
+            # drop v2i pc5 action of low priority vehicles
+            pc5_index = np.where((actions[:, 2] == 1) & (self.local_of == edge_index))
+            v2i_pc5_overload = (
+                np.clip(
+                    np.sum(actions[pc5_index, 2])
+                    - self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth,
+                    0,
+                    None,
+                )
+                / self.num_edges
             )
-            v2i_wifi_overload += max(
-                0,
-                np.sum(actions[vehicle_indices, 3])
-                - self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth,
-            )
+            if v2i_pc5_overload > 0:
+                priorities = np.argsort(
+                    self.remaining_segments[pc5_index]
+                    / self.remaining_deadline[pc5_index]
+                )
 
-        remaining_time_allowance = np.where(
-            self.task_done == 0, self.delivery_deadline[self.requested] - self.steps, 0
+                while v2i_pc5_overload > 0:
+                    actions[priorities[0], 2] = 0
+                    v2i_pc5_overload -= 1
+                    priorities = np.delete(priorities, 0)
+
+            # drop v2i wifi action of low priority vehicles
+            wifi_index = np.where((actions[:, 3] == 1) & (self.local_of == edge_index))
+            v2i_wifi_overload = (
+                np.clip(
+                    np.sum(actions[wifi_index, 3])
+                    - self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth,
+                    0,
+                    None,
+                )
+                / self.num_edges
+            )
+            if v2i_wifi_overload > 0:
+                priorities = np.argsort(
+                    self.remaining_segments[wifi_index]
+                    / self.remaining_deadline[wifi_index]
+                )
+
+                while v2i_wifi_overload > 0:
+                    actions[priorities[0], 3] = 0
+                    v2i_wifi_overload -= 1
+                    priorities = np.delete(priorities, 0)
+
+        actions = torch.tensor(actions.reshape(-1)).to(device)
+        return actions
+
+    def constraint_check(self):
+        deadline_overload = (
+            np.maximum(0, self.steps - self.delivery_deadline[self.requested]).sum()
+            / self.num_vehicles
         )
 
-        deadline_overload = np.where(
-            remaining_time_allowance < 0, -remaining_time_allowance, 0
-        ).mean()
-
-        return [
-            float(v2n_overload),
-            float(v2v_overload),
-            float(v2i_pc5_overload),
-            float(v2i_wifi_overload),
-            float(deadline_overload),
-        ]
+        return deadline_overload
 
     # State Management
     def set_states(self) -> None:
@@ -362,22 +408,23 @@ class Environment:
         )
         self.connection_status[in_bound_mask, 2] = has_item_any_edge.astype(int)
 
-        remaining_deadline = np.where(
+        self.remaining_deadline = np.where(
             self.task_done == 1,
             0,
             self.delivery_deadline[self.requested].flatten() - self.steps,
         )
 
-        remaining_segments = (
-            self.collected / self.num_code_min[self.requested]
-        ).flatten() / self.delivery_deadline_max
-        connection_status = self.connection_status.flatten()
+        self.remaining_segments = (
+            (self.num_code_min[self.requested] - self.collected).flatten().clip(min=0)
+        )
+
+        self.connection_status = self.connection_status.flatten()
 
         self.state = np.concatenate(
             [
-                connection_status,
-                remaining_deadline,
-                remaining_segments,
+                self.connection_status,
+                self.remaining_deadline,
+                self.remaining_segments,
             ]
         )
         self.state_dim = self.state.shape[0]
@@ -553,7 +600,6 @@ class Environment:
                     distance=distance,
                     path_loss_model="macro",
                 )
-                print(data_rate)
 
                 # compute the number of segments that can be transfered
                 v2n_transfered_segment = np.floor(data_rate * self.dt / self.code_size)
@@ -778,13 +824,16 @@ class Environment:
         self.delay += new_delay
         self.collected += new_collected
 
-        total_cost = new_cost.sum()
-        total_collected = new_collected.sum()
+        avg_collected = new_collected.sum() / self.num_vehicles
+        avg_cost = new_cost.sum() / self.num_vehicles
+        avg_delay = new_delay.sum() / self.num_vehicles
 
-        if total_cost != total_collected:
-            reward = total_collected / total_cost * 1e8
+        if avg_collected:
+            cost_term = avg_cost / avg_collected / self.code_size
+            delay_term = avg_delay / avg_collected * 5e2
+            reward = -cost_term - delay_term
         else:
-            reward = 0
+            reward = -100
 
         # check if all vehicles are done
         self.done = np.sum(self.task_done) == self.num_vehicles
@@ -795,7 +844,4 @@ class Environment:
         self.update_mask()
         self.set_states()
 
-        return (self.state, reward, self.done, self.constraint_check(actions))
-
-
-# Main Execution
+        return (self.state, reward, self.done, self.constraint_check())
