@@ -13,29 +13,27 @@ writer = SummaryWriter(log_dir=f"runs/ppo_{current}")
 
 
 if __name__ == "__main__":
-    num_vehicles = 40
+    num_vehicles = 20
     num_edges = 4
     num_items = 100
-    episode = 10000
+    episode = 100000
     steps = 0
     mini_batch_size = 32
-    steps_per_batch = 512
+    steps_per_batch = 4096
     hidden_dim = 128
-    lr = 3e-4
-    actor_lr = 3e-5
-    critic_lr = 3e-5
+    lr = 3e-5
     num_epoch = 10
-    eps = 0.2
+    eps = 0.1  # Constraint for the ratio of the old and new policy (higher is more exploratory)
     gamma = 0.99
 
     env = Environment(
         num_vehicles=num_vehicles,
         num_edges=num_edges,
         num_items=num_items,
-        delivery_deadline_min=5,
-        delivery_deadline_max=20,
+        delivery_deadline_min=50,
+        delivery_deadline_max=100,
         item_size_max=100,
-        item_size_min=50,
+        item_size_min=10,
         seed=42,
         dt=1,
     )
@@ -54,6 +52,7 @@ if __name__ == "__main__":
         writer=writer,
         mini_batch_size=mini_batch_size,
         tau=1e-3,
+        lambd_init=1.0,
         device="cpu" if torch.cuda.is_available() else "cpu",
     )
 
@@ -88,10 +87,10 @@ if __name__ == "__main__":
 
             ppo.add(
                 state_tensor,
-                mask_tensor,
-                action,
-                log_prob,
-                reward_tensor,
+                mask_tensor,  # num_agents x num_actions x action_dim
+                action,  # num_agents * num_actions
+                log_prob,  # 1
+                reward_tensor,  #
                 done,
                 violation,
             )
@@ -100,13 +99,13 @@ if __name__ == "__main__":
                 ppo.update()
                 ppo.clear()
 
-            writer.add_scalar(
-                "log/avg_violations",
-                violation,
-                global_step=steps,
-            )
-
             steps += 1
+
+        writer.add_scalar(
+            "log/avg_violations",
+            (env.delay - env.delivery_deadline[env.requested]).clip(0).mean(),
+            global_step=episode,
+        )
 
         writer.add_scalar(
             "log/accumulated_reward",

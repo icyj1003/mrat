@@ -256,10 +256,10 @@ class Environment:
 
         # Update the requests frequency
         self.requests_frequency = np.sum(self.requests_matrix, axis=0)
-        # self.cache = self.np_random.randint(
-        #     0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
-        # )
-        self.cache = np.ones((self.num_edges + self.num_vehicles, self.num_items))
+        self.cache = self.np_random.randint(
+            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        )
+        # self.cache = np.ones((self.num_edges + self.num_vehicles, self.num_items))
 
         self.requested = np.argmax(self.requests_matrix, axis=1)
 
@@ -379,12 +379,14 @@ class Environment:
         return actions
 
     def constraint_check(self):
-        deadline_overload = (
-            np.maximum(0, self.steps - self.delivery_deadline[self.requested]).sum()
+        deadline_cost = (
+            np.where(
+                (self.delay - self.delivery_deadline[self.requested]) > 0, 1, 0
+            ).sum()
             / self.num_vehicles
         )
 
-        return deadline_overload
+        return deadline_cost
 
     # State Management
     def set_states(self) -> None:
@@ -824,16 +826,21 @@ class Environment:
         self.delay += new_delay
         self.collected += new_collected
 
-        avg_collected = new_collected.sum() / self.num_vehicles
-        avg_cost = new_cost.sum() / self.num_vehicles
-        avg_delay = new_delay.sum() / self.num_vehicles
+        avg_cost = (
+            (new_cost / (self.num_code_min[self.requested] * self.code_size)).sum()
+            / self.num_vehicles
+            * 1e2
+        )
+        avg_delay = (
+            (new_delay / self.num_code_min[self.requested]).sum()
+            / self.num_vehicles
+            * 1e5
+        )
 
-        if avg_collected:
-            cost_term = avg_cost / avg_collected / self.code_size
-            delay_term = avg_delay / avg_collected * 5e2
-            reward = -cost_term - delay_term
-        else:
+        if new_collected.sum() == 0:
             reward = -100
+        else:
+            reward = -avg_delay - avg_cost
 
         # check if all vehicles are done
         self.done = np.sum(self.task_done) == self.num_vehicles

@@ -87,7 +87,9 @@ class PPO:
         gamma=0.99,
         lam=0.95,
         mini_batch_size=64,
-        tau=2,
+        tau=1e-3,
+        entropy_coeff=0.01,
+        lambd_init=0.1,
         device="cpu",
         writer=None,
     ):
@@ -103,6 +105,7 @@ class PPO:
         self.lam = lam
         self.mini_batch_size = mini_batch_size
         self.tau = tau
+        self.entropy_coeff = entropy_coeff
         self.device = device
         self.writer = writer
         self.steps = 0
@@ -114,7 +117,7 @@ class PPO:
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_c_target = copy.deepcopy(self.critic_c)
 
-        self.lambd = nn.Parameter(torch.tensor(0.001)).to(
+        self.lambd = nn.Parameter(torch.tensor(lambd_init)).to(
             device
         )  # Lagrange multiplier for constraint violation
 
@@ -198,17 +201,23 @@ class PPO:
         """
         Compute Generalized Advantage Estimation (GAE) for the given signals.
         Args:
-            signals (torch.Tensor): Signals for GAE.
-            values (torch.Tensor): Value estimates.
-            dones (torch.Tensor): Done flags.
+            signals (torch.Tensor): Immediate rewards or costs.
+            values (torch.Tensor): Value estimates (V(s)).
+            dones (torch.Tensor): Done flags (1 if terminal, 0 otherwise).
         Returns:
-            torch.Tensor: GAE for the signals.
+            torch.Tensor: Returns and GAE advantages.
         """
+        # Pad values and dones by appending one step (bootstrap value and non-terminal flag)
+        values = torch.cat([values, torch.zeros_like(values[-1:])], dim=0)
+        dones = torch.cat(
+            [dones, torch.ones_like(dones[-1:])], dim=0
+        )  # Assume terminal
+
         advantages = torch.zeros_like(signals)
         returns = torch.zeros_like(signals)
 
         gae = 0.0
-        for t in reversed(range(len(signals) - 1)):
+        for t in reversed(range(len(signals))):
             delta = (
                 signals[t]
                 + self.gamma * values[t + 1] * (1.0 - dones[t + 1].float())
@@ -218,7 +227,8 @@ class PPO:
             advantages[t] = gae
             returns[t] = gae + values[t]
 
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        if normalize:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         return returns.detach(), advantages.detach()
 
@@ -250,7 +260,7 @@ class PPO:
 
         # Compute actor loss
         obj_surr = (-torch.min(surr1, surr2)).mean()
-        entropy_loss = -entropy.mean() * 1e-3
+        entropy_loss = -entropy.mean() * self.entropy_coeff
         actor_loss = obj_surr + entropy_loss
 
         # Compute critic loss
@@ -293,6 +303,9 @@ class PPO:
             (advantages - self.lambd * advantages_c) / (self.lambd + 1)
         ).detach()
 
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
         # Prepare data for mini-batch training
         data_loader = torch.utils.data.DataLoader(
             torch.utils.data.TensorDataset(
@@ -334,6 +347,10 @@ class PPO:
                 # Backpropagation
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
+
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
+
                 self.actor_optimizer.step()
 
                 self.critic_optimizer.zero_grad()
@@ -370,7 +387,11 @@ class PPO:
 
             self.steps += 1
 
-        # Update dual loss
+        # Update lambda
+        # Log lambda
+        if self.writer is not None:
+            self.writer.add_scalar("log/lambda", self.lambd.item(), self.steps)
+
         # Mean violation
         mean_violations = torch.mean(violations).detach()
 
