@@ -191,8 +191,7 @@ class PPO:
 
         # project raw sample to valid action space
         if projection is not None:
-            action = projection(action)
-
+            action = torch.tensor(projection(action).reshape(-1)).to(self.device)
         log_prob = dists.log_prob(action)
 
         return action.detach().squeeze(), log_prob.detach().squeeze()

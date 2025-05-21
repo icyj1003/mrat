@@ -130,8 +130,8 @@ class Environment:
         i2n_data_rate: float = 100e6,
         i2i_cost: float = 0.3,
         i2n_cost: float = 8,
-        delay_weight: float = 0.5,
-        cost_weight: float = 0.5,
+        delay_weight: float = 1e9,
+        cost_weight: float = 5,
     ):
         # Main parameters
         self.dt = dt
@@ -157,13 +157,13 @@ class Environment:
         self.delivery_deadline_max = delivery_deadline_max
         self.delivery_deadline_min = delivery_deadline_min
         self.code_size = code_size
-        self.num_code_min = np.ceil(
+        self.item_size = (
             self.np_random.randint(item_size_min, item_size_max, size=self.num_items)
             * 1024
             * 1024
             * 8
-            / self.code_size
-        ).astype(int)
+        )  # Convert to bits
+        self.num_code_min = np.ceil(self.item_size / self.code_size).astype(int)
 
         # Mobility model
         self.road_length = road_length
@@ -231,7 +231,6 @@ class Environment:
         self.done = False
         self.reset_request()
         self.reset_mobility()
-        self.update_mask()
         self.set_states()
 
     def reset_request(self) -> None:
@@ -263,7 +262,7 @@ class Environment:
 
         self.requested = np.argmax(self.requests_matrix, axis=1)
 
-        self.task_done = np.zeros(self.num_vehicles)
+        self.delivery_done = np.zeros(self.num_vehicles)
         self.collected = np.zeros(self.num_vehicles)
         self.delay = np.zeros(self.num_vehicles)
         self.cost = np.zeros(self.num_vehicles)
@@ -303,88 +302,80 @@ class Environment:
         self.update_mobility_status()
 
     def greedy_projection(self, actions) -> None:  # num_vehicle x num_rats
-        # get the original device
-        device = actions.device
-
-        # convert to numpy array
-        actions = actions.numpy()
-
-        # reshape the actions to match the number of vehicles and rats
-        actions = actions.reshape((self.num_vehicles, self.num_rats))
 
         # compute the v2v action overload
         v2v_overload = max(
-            0, np.sum(actions[:, 1]) - self.v2v_bandwidth_max / self.v2v_bandwidth
+            0, torch.sum(actions[:, 1]) - self.v2v_bandwidth_max / self.v2v_bandwidth
         )
 
         # drop v2v action of low priority vehicles
         if v2v_overload > 0:
-            v2v_index = np.where(actions[:, 1] == 1)
-            priorities = np.argsort(
-                self.remaining_segments[v2v_index] / self.remaining_deadline[v2v_index]
-            )
+            v2v_index = torch.where(actions[:, 1] == 1)[0]
+            priorities = torch.argsort(
+                self.remaining_segments[v2v_index] / self.remaining_deadline[v2v_index],
+                dim=0,
+            ).squeeze()
 
             while v2v_overload > 0:
                 actions[priorities[0], 1] = 0
                 v2v_overload -= 1
-                priorities = np.delete(priorities, 0)
+                priorities = torch.delete(priorities, 0)
 
         # for each edge, check if the v2i pc5 and wifi actions are overloaded
         for edge_index in range(self.num_edges):
             # drop v2i pc5 action of low priority vehicles
-            pc5_index = np.where((actions[:, 2] == 1) & (self.local_of == edge_index))
+            pc5_index = torch.where(
+                (actions[:, 2] == 1) & (self.local_of == edge_index)
+            )[0]
             v2i_pc5_overload = (
-                np.clip(
-                    np.sum(actions[pc5_index, 2])
+                torch.clamp(
+                    torch.sum(actions[pc5_index, 2])
                     - self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth,
-                    0,
-                    None,
+                    min=0,
                 )
                 / self.num_edges
             )
             if v2i_pc5_overload > 0:
-                priorities = np.argsort(
+                priorities = torch.argsort(
                     self.remaining_segments[pc5_index]
-                    / self.remaining_deadline[pc5_index]
-                )
+                    / self.remaining_deadline[pc5_index],
+                    dim=0,
+                ).squeeze()
 
-                while v2i_pc5_overload > 0:
-                    actions[priorities[0], 2] = 0
+                while v2i_pc5_overload > 0 and priorities.numel() > 0:
+                    actions[pc5_index[priorities[0]], 2] = 0
                     v2i_pc5_overload -= 1
-                    priorities = np.delete(priorities, 0)
+                    priorities = priorities[1:]
 
             # drop v2i wifi action of low priority vehicles
-            wifi_index = np.where((actions[:, 3] == 1) & (self.local_of == edge_index))
+            wifi_index = torch.where(
+                (actions[:, 3] == 1) & (self.local_of == edge_index)
+            )[0]
             v2i_wifi_overload = (
-                np.clip(
-                    np.sum(actions[wifi_index, 3])
+                torch.clamp(
+                    torch.sum(actions[wifi_index, 3])
                     - self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth,
-                    0,
-                    None,
+                    min=0,
                 )
                 / self.num_edges
             )
             if v2i_wifi_overload > 0:
-                priorities = np.argsort(
+                priorities = torch.argsort(
                     self.remaining_segments[wifi_index]
-                    / self.remaining_deadline[wifi_index]
-                )
-
-                while v2i_wifi_overload > 0:
-                    actions[priorities[0], 3] = 0
+                    / self.remaining_deadline[wifi_index],
+                    dim=0,
+                ).squeeze()
+                while v2i_wifi_overload > 0 and priorities.numel() > 0:
+                    actions[wifi_index[priorities[0]], 3] = 0
                     v2i_wifi_overload -= 1
-                    priorities = np.delete(priorities, 0)
+                    priorities = priorities[1:]
 
-        actions = torch.tensor(actions.reshape(-1)).to(device)
         return actions
 
-    def constraint_check(self):
-        deadline_cost = (
-            np.where(
-                (self.delay - self.delivery_deadline[self.requested]) > 0, 1, 0
-            ).sum()
-            / self.num_vehicles
-        )
+    def compute_violation(self):
+        deadline_cost = np.where(
+            (self.delay - self.delivery_deadline[self.requested]) > 0, 1, 0
+        ).reshape(-1, 1)
 
         return deadline_cost
 
@@ -393,65 +384,17 @@ class Environment:
         """
         Set the states of the environment.
         """
-        self.connection_status = np.zeros((self.num_vehicles, 3))
-        self.connection_status[:, 0] = 1 - self.delivery_mask[:, 1, 1]
 
         in_bound_mask = self.out == 0
         requested_items = self.requested[in_bound_mask]
         local_edges = self.local_of[in_bound_mask]
 
-        # Check if the local edge has the requested item
-        has_item_local = self.cache[local_edges, requested_items] == 1
-        self.connection_status[in_bound_mask, 1] = has_item_local.astype(int)
+        # Initialize the delivery mask (no masks available - ==0)
+        self.masks = np.zeros((self.num_vehicles, self.num_rats, 2))
 
-        # Check if any edge has the requested item
-        has_item_any_edge = (
-            np.sum(self.cache[: self.num_edges, requested_items], axis=0) > 0
-        )
-        self.connection_status[in_bound_mask, 2] = has_item_any_edge.astype(int)
-
-        self.remaining_deadline = np.where(
-            self.task_done == 1,
-            0,
-            self.delivery_deadline[self.requested].flatten() - self.steps,
-        )
-
-        self.remaining_segments = (
-            (self.num_code_min[self.requested] - self.collected).flatten().clip(min=0)
-        )
-
-        self.connection_status = self.connection_status.flatten()
-
-        self.state = np.concatenate(
-            [
-                self.connection_status,
-                self.remaining_deadline,
-                self.remaining_segments,
-            ]
-        )
-        self.state_dim = self.state.shape[0]
-
-    def update_mask(self) -> None:
-        """
-        Update the action mask based on the current state of the environment.
-        """
-        # Delivery action mask
-        # Initialize the delivery mask (mask all actions as unavailable)
-        self.delivery_mask = np.zeros(
-            (self.num_vehicles, self.num_rats)
-        )  # 0: no mask, 1: force enable, -1: force disable
-
-        # get the requested item index
-        requested_item = np.where(self.requests_matrix == 1)[1]
-
-        # if vehicle request downloading is not satisfied within the deadline, force enable v2n
-
-        # if vehicle is out of the road, force disable v2i
-        self.delivery_mask[self.out == 1, 2] = -1
-        self.delivery_mask[self.out == 1, 3] = -1
-
-        # if vehicle not in wifi coverage, force disable v2i wifi
-        self.delivery_mask[self.local_edge_distance > self.v2i_wifi_coverage, 3] = -1
+        # if vehicle is out of the road, force disable v2i (mask 1)
+        self.masks[self.out == 1, 2, 1] = 1
+        self.masks[self.out == 1, 3, 1] = 1
 
         # if any nearby vehicle has the requested item and in communication range
         for vehicle_index in range(self.num_vehicles):
@@ -463,7 +406,7 @@ class Environment:
                     < self.v2v_pc5_coverage  # check if in communication range
                     and self.cache[
                         self.num_edges + nearby_vehicle_index,
-                        requested_item[vehicle_index],
+                        self.requested[vehicle_index],
                     ]
                     == 1  # check if the nearby vehicle has the requested item
                 ):
@@ -472,20 +415,114 @@ class Environment:
                     break
 
             if not any_car:
-                # if v2v is not available, force disable v2v
-                self.delivery_mask[vehicle_index, 1] = -1
+                # if v2v is not available, force disable v2v (mask 1)
+                self.masks[vehicle_index, 1, 1] = 1
 
-        # turn off the action mask for vehicles that have already satisfied their requests
-        self.delivery_mask[self.task_done == 1, :] = -1
-        mask_1 = np.where(self.delivery_mask == -1, 1, 0)
-        mask_0 = np.where(self.delivery_mask == 1, 1, 0)
-        self.delivery_mask = np.stack(
+        # if delivery is done, force disable all actions (mask 1)
+        self.masks[self.delivery_done == 1, :, 1] = 1
+
+        self.connection_status = np.zeros((self.num_vehicles, 5))
+        """ 
+        0: cache available in nearby vehicle
+        1: cache available in local edge
+        2: cache available in neighbor edge
+        3: number of vehicle in local pc5 coverage
+        4: number of vehicle in local wifi coverage
+        """
+
+        # cache in nearby vehicle
+        self.connection_status[:, 0] = 1 - self.masks[:, 1, 1]
+
+        # cache in local edge
+        self.connection_status[in_bound_mask, 1] = (
+            self.cache[local_edges, requested_items] == 1
+        ).astype(int)
+
+        # cache in neighbor edge
+        self.connection_status[in_bound_mask, 2] = np.array(
             [
-                mask_0,
-                mask_1,
-            ],
-            axis=-1,
+                np.any(
+                    [
+                        self.cache[edge_idx, item] == 1 and edge_idx != local_edge
+                        for edge_idx in range(self.num_edges)
+                    ]
+                )
+                for item, local_edge in zip(requested_items, local_edges)
+            ]
+        ).astype(int)
+
+        # count number of vehicles in coverage of each edge
+        counts = np.zeros((self.num_edges, 2))
+        for vehicle_index in range(self.num_vehicles):
+            # ignore if vehicle is out of the road or the delivery is done
+            if (
+                not in_bound_mask[vehicle_index]
+                or self.delivery_done[vehicle_index] == 1
+            ):
+                continue
+
+            edge_index = int(self.local_of[vehicle_index])
+
+            counts[edge_index, 0] += 1
+            if self.local_edge_distance[vehicle_index] < self.v2i_wifi_coverage:
+                counts[edge_index, 1] += 1
+
+                # if the vehicle is in wifi coverage, force disable v2i wifi
+                self.masks[vehicle_index, 3][1] = 1
+
+        max_pc5 = self.v2i_wifi_bandwidth_max / self.v2i_pc5_bandwidth
+        max_wifi = self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth
+
+        # normalize the number of vehicles in coverage of each edge
+        counts[:, 0] /= max_pc5
+        counts[:, 1] /= max_wifi
+
+        # assign the number of vehicles in coverage of each edge to the connection status
+        for edge_index in range(self.num_edges):
+            self.connection_status[(self.local_of == edge_index) & in_bound_mask, 3] = (
+                counts[edge_index, 0]
+            )
+            self.connection_status[(self.local_of == edge_index) & in_bound_mask, 4] = (
+                counts[edge_index, 1]
+            )
+
+        # remaining deadline of uncompleted tasks (0 if task is done) | shape: (num_vehicles,)
+        self.remaining_deadline = np.where(
+            self.delivery_done == 1,
+            0,
+            self.delivery_deadline[self.requested] - self.steps,
+        ).reshape(-1, 1)
+
+        # remaining segments of uncompleted tasks (0 if task is done) | shape: (num_vehicles,)
+        self.remaining_segments = (
+            (self.num_code_min[self.requested] - self.collected)
+            .clip(min=0)
+            .reshape(-1, 1)
         )
+
+        # how long the delivery is late
+        self.current_late = np.where(
+            self.delivery_done == 1,
+            0,
+            np.clip(self.delay - self.delivery_deadline[self.requested], 0, None),
+        ).reshape(-1, 1)
+
+        # if the delivery is not done and late, force enable v2n
+        self.masks[
+            (self.delivery_done == 0) & (self.current_late.reshape(-1) > 0), 0, 0
+        ] = 1
+
+        self.states = np.concatenate(
+            [
+                self.connection_status,
+                self.remaining_deadline,
+                self.remaining_segments,
+                self.current_late,
+            ],
+            axis=1,
+        )
+
+        self.state_dim = self.states.shape[1]
 
     # Mobility Updates
     def update_mobility_status(self) -> None:
@@ -518,7 +555,7 @@ class Environment:
         )
 
         # Mask out-of-bounds vehicles
-        self.local_edge_distance[self.out == 1] = -1
+        self.local_edge_distance[self.out == 1] = 1e9
 
         # Pre-compute BS distances (broadcasted subtraction)
         self.bs_distance = np.linalg.norm(self.positions - self.bs_positions, axis=1)
@@ -584,7 +621,7 @@ class Environment:
             requested_item = np.where(self.requests_matrix[vehicle_index] == 1)[0]
 
             # ignore if request has been satisfied
-            if self.task_done[vehicle_index] == 1:
+            if self.delivery_done[vehicle_index] == 1:
                 continue
 
             new_delay[vehicle_index] = self.dt
@@ -819,36 +856,35 @@ class Environment:
 
             # check if the vehicle has collected all the requested items
             if self.collected[vehicle_index] > self.num_code_min[requested_item]:
-                self.task_done[vehicle_index] = 1
+                self.delivery_done[vehicle_index] = 1
 
         # accumulate the cost and delay
         self.cost += new_cost
         self.delay += new_delay
         self.collected += new_collected
 
-        avg_cost = (
-            (new_cost / (self.num_code_min[self.requested] * self.code_size)).sum()
-            / self.num_vehicles
-            * 1e2
-        )
-        avg_delay = (
-            (new_delay / self.num_code_min[self.requested]).sum()
-            / self.num_vehicles
-            * 1e5
-        )
+        # compute cost and delay terms
+        delay_term = (
+            -self.delay_weight * self.delay / self.item_size[self.requested]
+        )  # delay per bit
+        cost_term = (
+            -self.cost_weight * self.cost / self.item_size[self.requested]
+        )  # cost per bit
 
-        if new_collected.sum() == 0:
-            reward = -100
-        else:
-            reward = -avg_delay - avg_cost
+        # compute the reward, dones, and violations
+        self.rewards = (delay_term + cost_term).reshape(-1, 1)
+        self.dones = self.delivery_done.astype(float).reshape(-1, 1)
+        self.violations = self.compute_violation()
 
-        # check if all vehicles are done
-        self.done = np.sum(self.task_done) == self.num_vehicles
-
-        # update the mobility model
+        # update env
         self.step_velocity()
         self.step_position()
-        self.update_mask()
         self.set_states()
 
-        return (self.state, reward, self.done, self.constraint_check())
+        # return the next states, rewards, dones, and violations
+        return (
+            self.states,
+            self.rewards,
+            self.dones,
+            self.violations,
+        )

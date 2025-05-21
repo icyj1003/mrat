@@ -40,7 +40,6 @@ class Actor(nn.Module):
         x = self.fc(state)  # [batch_size, num_actions * num_sub_action * action_dim]
         x = x.view(-1, self.num_actions, self.action_dim)
         x = x + mask * -1e10
-
         return x
 
 
