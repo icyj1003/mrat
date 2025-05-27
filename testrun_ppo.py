@@ -21,11 +21,11 @@ if __name__ == "__main__":
     mini_batch_size = 32
     steps_per_batch = 1024
     hidden_dim = 128
-    lr = 3e-5
+    lr = 1e-3
     num_epoch = 10
     eps = 0.2  # Constraint for the ratio of the old and new policy (higher is more exploratory)
     gamma = 0.99
-    entropy_coeff = 0.01
+    entropy_coeff = 1
     penalty_coeff = 1.0
     lam = 0.95
     tau = 1e-2
