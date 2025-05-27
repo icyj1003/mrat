@@ -5,69 +5,13 @@ import torch.nn as nn
 from typing import *
 
 from tqdm import tqdm
+from buffer import RolloutBuffer
 from common import Actor, Critic
 
 
 from typing import *
 
 import torch
-
-
-class RolloutBuffer:
-    """
-    Rollout buffer for storing trajectories for PPO.
-    """
-
-    def __init__(self, device="cpu"):
-        self.states = []
-        self.masks = []
-        self.actions = []
-        self.log_probs = []
-        self.rewards = []
-        self.dones = []
-        self.violations = []
-        self.device = device
-
-    def add(
-        self,
-        state,
-        mask,
-        action,
-        log_prob,
-        reward,
-        done,
-        violations,
-    ):
-        self.states.append(state)
-        self.masks.append(mask)
-        self.actions.append(action)
-        self.log_probs.append(log_prob)
-        self.rewards.append(reward)
-        self.dones.append(done)
-        self.violations.append(violations)
-
-    def get(self):
-        return (
-            torch.stack(self.states).to(self.device),
-            torch.stack(self.masks).to(self.device),
-            torch.stack(self.actions).to(self.device),
-            torch.stack(self.log_probs).to(self.device),
-            torch.tensor(self.rewards).to(self.device),
-            torch.tensor(self.dones).to(self.device),
-            torch.tensor(self.violations).to(self.device),
-        )
-
-    def clear(self):
-        self.states = []
-        self.masks = []
-        self.actions = []
-        self.log_probs = []
-        self.rewards = []
-        self.dones = []
-        self.violations = []
-
-    def __len__(self):
-        return len(self.states)
 
 
 class PPO:
@@ -78,7 +22,7 @@ class PPO:
     def __init__(
         self,
         state_dim,
-        num_action,
+        num_actions,
         action_dim,
         hidden_dim=64,
         lr=3e-4,
@@ -86,16 +30,18 @@ class PPO:
         eps=0.2,
         gamma=0.99,
         lam=0.95,
-        mini_batch_size=64,
         tau=1e-3,
+        mini_batch_size=64,
         entropy_coeff=0.01,
-        lambd_init=0.1,
+        penalty_coeff=1,
+        penalty_lr=1e-3,
         device="cpu",
         writer=None,
     ):
 
+        # Hyperparameters
         self.state_dim = state_dim
-        self.num_action = num_action
+        self.num_actions = num_actions
         self.action_dim = action_dim
         self.hidden_dim = hidden_dim
         self.lr = lr
@@ -106,29 +52,60 @@ class PPO:
         self.mini_batch_size = mini_batch_size
         self.tau = tau
         self.entropy_coeff = entropy_coeff
+        self.penalty_coeff = penalty_coeff
+        self.penalty_lr = penalty_lr
         self.device = device
         self.writer = writer
         self.steps = 0
 
-        self.actor = Actor(state_dim, num_action, action_dim, hidden_dim).to(device)
+        # define networks
+        self.actor = Actor(state_dim, num_actions, action_dim, hidden_dim).to(device)
         self.critic = Critic(state_dim, hidden_dim).to(device)
-        self.critic_c = Critic(state_dim, hidden_dim).to(device)
-
         self.critic_target = copy.deepcopy(self.critic)
-        self.critic_c_target = copy.deepcopy(self.critic_c)
-
-        self.lambd = nn.Parameter(torch.tensor(lambd_init)).to(
-            device
-        )  # Lagrange multiplier for constraint violation
 
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
-        self.critic_c_optimizer = torch.optim.Adam(self.critic_c.parameters(), lr=lr)
-        self.lambd_optimizer = torch.optim.Adam([self.lambd], lr=lr)
 
         self.buffer = RolloutBuffer(
             device=device,
         )
+        self.global_step = 0
+
+    def act(self, state, mask, projection=None):
+        """
+        Sample an action from the actor network given the current state and mask.
+        Args:
+            state (torch.Tensor): Current state.
+            mask (torch.Tensor): Action mask.
+            projection (callable, optional): Function to project raw actions to valid action space.
+        Returns:
+            torch.Tensor: Sampled action.
+            torch.Tensor: Log probability of the sampled action.
+        """
+
+        # Add batch dimension
+        state = state.unsqueeze(0).to(self.device)
+        mask = mask.unsqueeze(0).to(self.device)
+
+        # Compute logits from the actor network
+        logits = self.actor(state, mask).squeeze(
+            0
+        )  # [1, num_actions, action_dim] --> [num_actions, action_dim]
+
+        # Sample actions
+        dists = torch.distributions.Categorical(logits=logits)
+
+        actions = dists.sample().detach()  # shape: [(num_actions * action_dim)]
+
+        # project raw sample to valid action space
+        if projection is not None:
+            valid_actions = projection(actions)
+        else:
+            valid_actions = actions
+
+        log_probs = dists.log_prob(valid_actions).detach()
+
+        return valid_actions, log_probs
 
     def evaluate(self, states, masks, actions):
         """
@@ -141,270 +118,176 @@ class PPO:
             torch.Tensor: Log probabilities of actions.
         """
         # Compute logits from the actor network
-        logits = self.actor(states, masks)  # [batch_size, num_action, action_dim]
+        logits = self.actor(states, masks)  # [batch_size, num_actions, action_dim]
 
         # Reshape for Categorical: merge batch and action dims
         logits_flat = logits.view(
             -1, self.action_dim
-        )  # [(batch * num_action), action_dim]
+        )  # [(batch * num_actions), action_dim]
 
-        actions_flat = actions.view(-1)  # [(num_action * action_dim), 1]
+        actions_flat = actions.view(-1)  # [(num_actions * action_dim), 1]
 
         # Sample actions
         dists = torch.distributions.Categorical(
             logits=logits_flat
         )  # each row is a [logit_0, logit_1]
 
-        log_probs = dists.log_prob(actions_flat).view(-1, self.num_action)
-        entropy = dists.entropy().view(-1, self.num_action)
+        log_probs = dists.log_prob(actions_flat).view(-1, self.num_actions)
+        entropy = dists.entropy().view(-1, self.num_actions)
 
-        values = self.critic(states).squeeze(-1)
-        values_c = self.critic_c(states).squeeze(-1)
-
-        return (values, values_c, log_probs, entropy)
-
-    def act(self, state, mask, projection=None):
-        """
-        Sample an action from the actor network.
-        Args:
-            state (torch.Tensor): Current state.
-            mask (torch.Tensor): Action mask.
-        Returns:
-            torch.Tensor: Sampled action.
-        """
-
-        # Add batch dimension
-        state = state.unsqueeze(0).to(self.device)
-        mask = mask.unsqueeze(0).to(self.device)
-
-        # Compute logits from the actor network
-        logits = self.actor(state, mask)  # [1, num_action, action_dim]
-
-        logits_flat = logits.view(
-            -1, self.action_dim
-        )  # [(1 * num_action), self.action_dim]
-
-        # Sample actions
-        dists = torch.distributions.Categorical(logits=logits_flat)
-
-        action = dists.sample()  # shape: [(num_action * action_dim)]
-
-        # project raw sample to valid action space
-        if projection is not None:
-            action = torch.tensor(projection(action).reshape(-1)).to(self.device)
-        log_prob = dists.log_prob(action)
-
-        return action.detach().squeeze(), log_prob.detach().squeeze()
+        return log_probs, entropy
 
     def gae(self, signals, values, dones, normalize=True):
         """
-        Compute Generalized Advantage Estimation (GAE) for the given signals.
+        Generalized Advantage Estimation (GAE).
         Args:
-            signals (torch.Tensor): Immediate rewards or costs.
-            values (torch.Tensor): Value estimates (V(s)).
-            dones (torch.Tensor): Done flags (1 if terminal, 0 otherwise).
+            signals: (T, ...) Tensor of signals (rewards, violations, etc.)
+            values: (T+1, ...) Value estimates (bootstrap included)
+            dones: (T, ...) Episode done flags (1 if done, else 0)
         Returns:
-            torch.Tensor: Returns and GAE advantages.
+            advantages: (T, ...) Advantage estimates
+            returns: (T, ...) Target values
         """
-        # Pad values and dones by appending one step (bootstrap value and non-terminal flag)
-        values = torch.cat([values, torch.zeros_like(values[-1:])], dim=0)
-        dones = torch.cat(
-            [dones, torch.ones_like(dones[-1:])], dim=0
-        )  # Assume terminal
+        # Ensure the same of values and signals
+        assert signals.shape[0] == values.shape[0] - 1 == dones.shape[0]
 
+        T = signals.shape[0]
         advantages = torch.zeros_like(signals)
-        returns = torch.zeros_like(signals)
+        last_adv = 0
 
-        gae = 0.0
-        for t in reversed(range(len(signals))):
-            delta = (
-                signals[t]
-                + self.gamma * values[t + 1] * (1.0 - dones[t + 1].float())
-                - values[t]
+        for t in reversed(range(T)):
+            not_done = 1.0 - dones[t]
+            delta = signals[t] + self.gamma * values[t + 1] * not_done - values[t]
+            advantages[t] = last_adv = (
+                delta + self.gamma * self.lam * not_done * last_adv
             )
-            gae = delta + self.gamma * self.lam * (1.0 - dones[t].float()) * gae
-            advantages[t] = gae
-            returns[t] = gae + values[t]
 
+        returns = advantages + values[:-1]
         if normalize:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        return returns.detach(), advantages.detach()
-
-    def process_batch(self, batch):
-        """
-        Process a single batch during the PPO update.
-        """
-        (
-            batch_states,
-            batch_masks,
-            batch_actions,
-            batch_log_probs,
-            batch_returns,
-            batch_returns_c,
-            batch_advantages,
-        ) = batch
-
-        # Compute new log prob and values
-        new_values, new_values_c, new_log_probs, entropy = self.evaluate(
-            batch_states, batch_masks, batch_actions
-        )
-
-        # Compute PPO ratio
-        ratios = torch.exp(new_log_probs.sum(dim=-1) - batch_log_probs.sum(dim=-1))
-
-        # Compute surrogate loss
-        surr1 = ratios * batch_advantages
-        surr2 = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * batch_advantages
-
-        # Compute actor loss
-        obj_surr = (-torch.min(surr1, surr2)).mean()
-        entropy_loss = -entropy.mean() * self.entropy_coeff
-        actor_loss = obj_surr + entropy_loss
-
-        # Compute critic loss
-        critic_loss = F.smooth_l1_loss(new_values, batch_returns)
-
-        # Compute critic_c loss
-        critic_c_loss = F.smooth_l1_loss(new_values_c, batch_returns_c)
-
-        return actor_loss, entropy_loss, critic_loss, critic_c_loss
+        return advantages, returns
 
     def update(self):
         """
         Update the actor and critic networks using the PPO algorithm.
         """
-        # Get data from the buffer
+        # Get the data from the buffer
         (
             states,
             masks,
             actions,
             log_probs,
             rewards,
+            next_states,
             dones,
             violations,
         ) = self.buffer.get()
 
-        values = self.critic_target(states).squeeze(-1)
-        values_c = self.critic_c_target(states).squeeze(-1)
+        # prepare values for GAE
+        values = self.critic(states).detach()
+        next_values = self.critic_target(next_states).detach()
+        values = torch.cat((values, next_values[-1].unsqueeze(0)), dim=0)
 
-        # Compute discounted rewards returns and advantages
-        returns, advantages = self.gae(rewards, values, dones)  # [rollout_len]
+        # lagrangian penalty
+        rewards = rewards - self.penalty_coeff * violations
 
-        # Compute discounted constraints violations returns and advantages
-        returns_c, advantages_c = self.gae(
-            violations,
-            values_c,
-            dones,
-        )  # [rollout_len]
+        # compute advantages and returns
+        advantages, returns = self.gae(rewards, values, dones, normalize=True)
 
-        advantages = (
-            (advantages - self.lambd * advantages_c) / (self.lambd + 1)
-        ).detach()
+        # create mini-batches
+        dataset = torch.utils.data.TensorDataset(
+            states,
+            masks,
+            actions,
+            log_probs,
+            advantages,
+            returns,
+        )
 
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-        # Prepare data for mini-batch training
-        data_loader = torch.utils.data.DataLoader(
-            torch.utils.data.TensorDataset(
-                states,
-                masks,
-                actions,
-                log_probs,
-                returns,
-                returns_c,
-                advantages,
-            ),
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
             batch_size=self.mini_batch_size,
             shuffle=True,
         )
 
-        num_batches = len(data_loader)
-
-        for _ in tqdm(range(self.num_epoch), desc="PPO Update", leave=False):
-            # Initialize average losses
-            avg_actor_loss, avg_entropy_loss, avg_critic_loss, avg_critic_c_loss = (
-                0.0,
+        # Update the actor and critic networks
+        for _ in tqdm(range(self.num_epoch), desc="Epochs"):
+            avg_actor_loss, avg_entropy_loss, avg_critic_loss = (
                 0.0,
                 0.0,
                 0.0,
             )
+            for (
+                state_batch,
+                mask_batch,
+                action_batch,
+                old_log_probs_batch,
+                advantage_batch,
+                return_batch,
+            ) in tqdm(dataloader, desc="PPO minibatch"):
+                # Update the actor network
+                self.actor_optimizer.zero_grad()
 
-            for batch in tqdm(data_loader, desc="Mini-batch Update", leave=False):
-                # Process batch
-                actor_loss, entropy_loss, critic_loss, critic_c_loss = (
-                    self.process_batch(batch)
+                # Compute new log probabilities
+                new_log_probs, entropy = self.evaluate(
+                    state_batch, mask_batch, action_batch
                 )
+
+                # Compute the ratio
+                ratio = torch.exp(new_log_probs - old_log_probs_batch)
+
+                # Compute the surrogate loss
+                surrogate_loss = -torch.min(
+                    ratio * advantage_batch,
+                    torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage_batch,
+                ).mean()
+
+                # Compute the entropy loss
+                entropy_loss = self.entropy_coeff * entropy.mean()
+
+                # Total loss
+                actor_loss = surrogate_loss + entropy_loss
+
+                # Backpropagation
+                actor_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
+                self.actor_optimizer.step()
+
+                # Update the critic network
+                self.critic_optimizer.zero_grad()
+
+                # Compute the critic loss
+                critic_loss = F.smooth_l1_loss(self.critic(state_batch), return_batch)
+
+                # Backpropagation
+                critic_loss.backward()
+                self.critic_optimizer.step()
+
+                # Update the target network
+                self.soft_update()
 
                 # Accumulate losses
                 avg_actor_loss += actor_loss.item()
                 avg_entropy_loss += entropy_loss.item()
                 avg_critic_loss += critic_loss.item()
-                avg_critic_c_loss += critic_c_loss.item()
 
-                # Backpropagation
-                self.actor_optimizer.zero_grad()
-                actor_loss.backward()
+            # Average losses over the mini-batches
+            avg_actor_loss /= len(dataloader)
+            avg_entropy_loss /= len(dataloader)
+            avg_critic_loss /= len(dataloader)
+            self.writer.add_scalar("actor_loss", avg_actor_loss, self.global_step)
+            self.writer.add_scalar("entropy_loss", avg_entropy_loss, self.global_step)
+            self.writer.add_scalar("critic_loss", avg_critic_loss, self.global_step)
 
-                # Gradient clipping
-                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
+            self.global_step += 1
 
-                self.actor_optimizer.step()
+        # update penalty coefficient
+        self.penalty_coeff += self.penalty_lr * (violations.mean()).detach()
+        self.penalty_coeff = max(0, min(self.penalty_coeff, 1))
 
-                self.critic_optimizer.zero_grad()
-                critic_loss.backward()
-                self.critic_optimizer.step()
-
-                self.critic_c_optimizer.zero_grad()
-                critic_c_loss.backward()
-                self.critic_c_optimizer.step()
-
-                # Soft update target networks
-                self.soft_update()
-
-            # Normalize average losses
-            avg_actor_loss /= num_batches
-            avg_entropy_loss /= num_batches
-            avg_critic_loss /= num_batches
-            avg_critic_c_loss /= num_batches
-
-            # Log average losses
-            if self.writer is not None:
-                self.writer.add_scalar(
-                    "loss/avg_actor_loss", avg_actor_loss, self.steps
-                )
-                self.writer.add_scalar(
-                    "loss/avg_critic_loss", avg_critic_loss, self.steps
-                )
-                self.writer.add_scalar(
-                    "loss/avg_entropy_loss", avg_entropy_loss, self.steps
-                )
-                self.writer.add_scalar(
-                    "loss/avg_critic_c_loss", avg_critic_c_loss, self.steps
-                )
-
-            self.steps += 1
-
-        # Update lambda
-        # Log lambda
-        if self.writer is not None:
-            self.writer.add_scalar("log/lambda", self.lambd.item(), self.steps)
-
-        # Mean violation
-        mean_violations = torch.mean(violations).detach()
-
-        # Dual loss
-        lagrange_loss = -self.lambd * mean_violations
-
-        # Optimize
-        self.lambd_optimizer.zero_grad()
-        lagrange_loss.backward()
-        self.lambd_optimizer.step()
-
-        # Clip lambda
-        with torch.no_grad():
-            self.lambd.clamp_(min=0.0)
+        # clear the buffer
+        self.buffer.clear()
 
     def soft_update(self):
         """
@@ -416,28 +299,3 @@ class PPO:
             target_param.data.copy_(
                 self.tau * param.data + (1 - self.tau) * target_param.data
             )
-
-        for target_param, param in zip(
-            self.critic_c_target.parameters(), self.critic_c.parameters()
-        ):
-            target_param.data.copy_(
-                self.tau * param.data + (1 - self.tau) * target_param.data
-            )
-
-    def clear(self):
-        """
-        Clear the buffer.
-        """
-        self.buffer.clear()
-
-    def add(self, state, mask, action, log_prob, reward, done, violation):
-        """
-        Add a transition to the buffer.
-        """
-        self.buffer.add(state, mask, action, log_prob, reward, done, violation)
-
-    def buffer_length(self):
-        """
-        Get the length of the buffer.
-        """
-        return len(self.buffer)

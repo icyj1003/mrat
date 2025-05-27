@@ -1,80 +1,10 @@
 from copy import deepcopy
 
 import torch
+from tqdm import tqdm, trange
 
+from buffer import MARolloutBuffer
 from common import Actor, Critic
-
-
-class MARolloutBuffer:
-    """
-    Rollout buffer for storing trajectories for PPO.
-    """
-
-    def __init__(self, device="cpu"):
-        self.states = []
-        self.masks = []
-        self.actions = []
-        self.log_probs = []
-        self.rewards = []
-        self.dones = []
-        self.violations = []
-        self.device = device
-
-    def add(
-        self,
-        states,  # tensor: num_agents x state_dim
-        masks,  # tensor: num_agents x num_actions x action_dim
-        actions,  # tensor: num_agents x num_actions
-        log_probs,  # tensor: num_agents x num_actions
-        rewards,  # tensor: num_agents x 1
-        dones,  # tensor: num_agents x 1
-        violations,  # tensor: num_agents x 1
-    ):
-        self.states.append(states)
-        self.masks.append(masks)
-        self.actions.append(actions)
-        self.log_probs.append(log_probs)
-        self.rewards.append(rewards)
-        self.dones.append(dones)
-        self.violations.append(violations)
-
-    def get(self):
-        stack_dim = 1  # put the trajectory length behind the number of agents
-        return (
-            torch.stack(self.states, dim=stack_dim).to(
-                self.device
-            ),  # trajectory length x num_agents x state_dim
-            torch.stack(self.masks, dim=stack_dim).to(
-                self.device
-            ),  # trajectory length x num_agents x num_actions x action_dim
-            torch.stack(self.actions, dim=stack_dim).to(
-                self.device
-            ),  # trajectory length x num_agents x num_actions
-            torch.stack(self.log_probs, dim=stack_dim).to(
-                self.device
-            ),  # trajectory length x num_agents x num_actions
-            torch.stack(self.rewards, dim=stack_dim).to(
-                self.device
-            ),  # trajectory length x num_agents x 1
-            torch.stack(self.dones, dim=stack_dim).to(
-                self.device
-            ),  # trajectory length x num_agents x 1
-            torch.stack(self.violations, dim=stack_dim).to(
-                self.device
-            ),  # trajectory length x num_agents x 1
-        )
-
-    def clear(self):
-        self.states = []
-        self.masks = []
-        self.actions = []
-        self.log_probs = []
-        self.rewards = []
-        self.dones = []
-        self.violations = []
-
-    def __len__(self):
-        return len(self.states)
 
 
 class MAPPO:
@@ -90,17 +20,19 @@ class MAPPO:
         eps=0.2,
         gamma=0.99,
         lam=0.95,
-        tau=0.5,
-        entropy_coef=0.01,
-        lagrange_init=1.0,
-        lagrange_lr=1e-3,
+        tau=1e-3,
         mini_batch_size=64,
+        entropy_coeff=0.01,
+        penalty_coeff=1.0,
+        penalty_lr=1e-3,
         device="cpu",
         writer=None,
+        use_lagrange=True,
         shared_actor=False,
         shared_critic=False,
-        shared_lagrange=False,
     ):
+
+        # Hyperparameters
         self.num_agents = num_agents
         self.num_actions = num_actions
         self.action_dim = action_dim
@@ -112,11 +44,13 @@ class MAPPO:
         self.gamma = gamma
         self.lam = lam
         self.tau = tau
-        self.entropy_coef = entropy_coef
-        self.lagrange_lr = lagrange_lr
+        self.entropy_coeff = entropy_coeff
+        self.penalty_coeff = penalty_coeff
+        self.penalty_lr = penalty_lr
         self.mini_batch_size = mini_batch_size
         self.device = device
         self.writer = writer
+        self.use_lagrange = use_lagrange
         self.shared_actor = shared_actor
         self.shared_critic = shared_critic
 
@@ -131,31 +65,17 @@ class MAPPO:
                 for _ in range(num_agents)
             ]
 
-        # define lagrange multipliers
-        if shared_lagrange:
-            self.lagranges = [torch.tensor(lagrange_init).to(device)] * num_agents
-        else:
-            self.lagranges = [
-                torch.tensor(lagrange_init).to(device) for _ in range(num_agents)
-            ]
-
         # define critics
         if shared_critic:
             self.critics = [Critic(state_dim, hidden_dim).to(device)] * num_agents
-            self.critic_c = [Critic(state_dim, hidden_dim).to(device)] * num_agents
         else:
             self.critics = [
                 Critic(state_dim, hidden_dim).to(device) for _ in range(num_agents)
             ]
-            self.critic_c = [
-                Critic(state_dim, hidden_dim).to(device) for _ in range(num_agents)
-            ]
 
         self.critics_target = [deepcopy(critic) for critic in self.critics]
-        self.critic_c_target = [deepcopy(critic) for critic in self.critic_c]
         for i in range(num_agents):
             self.critics_target[i].load_state_dict(self.critics[i].state_dict())
-            self.critic_c_target[i].load_state_dict(self.critic_c[i].state_dict())
 
         self.actor_optimizers = [
             torch.optim.Adam(actor.parameters(), lr=lr) for actor in self.actors
@@ -166,14 +86,22 @@ class MAPPO:
         ]
 
         self.buffer = MARolloutBuffer(device=device)
+        self.global_step = 0
 
     def act(self, states, masks, projection=None):
         """
-        Sample actions from the policy.
-        states: tensor of shape (num_agents, state_dim)
-        masks: tensor of shape (num_agents, num_actions, action_dim)
-        projection (optional): function to project the actions to valid actions space
-        returns: tensor of shape (num_agents, num_actions)
+        Sample actions from the policy for each agent.
+        Args:
+            states: list of tensors, each of shape (state_dim)
+                representing the state for each agent
+            masks: list of tensors, each of shape (num_actions, action_dim)
+                representing the mask for each agent
+            projection: optional function to project actions to valid actions
+        Returns:
+            actions: tensor of shape (num_agents, num_actions)
+                representing the sampled actions for each agent
+            log_probs: tensor of shape (num_agents, num_actions)
+                representing the log probabilities of the sampled actions
         """
         actions = []
         log_probs = []
@@ -205,32 +133,30 @@ class MAPPO:
             log_probs.append(dists[i].log_prob(valid_actions[i]))
 
         log_probs = torch.stack(log_probs, dim=0).detach()  # num_agents x num_actions
-        return actions, log_probs
+        return valid_actions, log_probs
 
-    def evaluate(self, states, masks, actions):
+    def evaluate(self, agent_idx, state, mask, action):
         """
-        Evaluate the policy.
-        states: tensor of shape (num_agents, state_dim)
-        masks: tensor of shape (num_agents, num_actions, action_dim)
-        actions: tensor of shape (num_agents, num_actions)
-        returns: tuple of (log_probs, entropy)
+        Evaluate the policy for a given agent.
+        Args:
+            agent_id: id of the agent
+            state: tensor of shape (state_dim)
+            mask: tensor of shape (num_actions, action_dim)
+            action: tensor of shape (num_actions)
+        Returns:
+            log_probs: tensor of shape (num_actions)
+            entropy: tensor of shape (num_actions)
         """
-        log_probs = []
-        entropy = []
+        state = state.to(self.device)
+        mask = mask.to(self.device)
+        action = action.to(self.device)
 
-        for i in range(self.num_agents):
-            # send to device
-            state = states[i].to(self.device)
-            mask = masks[i].to(self.device)
-
-            # get the raw logits from the actor
-            logit = self.actors[i](state, mask).squeeze(0)
-            # calculate log probs
-            dist = torch.distributions.Categorical(logits=logit)
-            log_probs.append(dist.log_prob(actions[i]))
-            entropy.append(dist.entropy())
-        log_probs = torch.stack(log_probs, dim=0).detach()
-        entropy = torch.stack(entropy, dim=0).detach()
+        # get the raw logits from the actor
+        logit = self.actors[agent_idx](state, mask).squeeze(0)
+        # calculate log probs
+        dist = torch.distributions.Categorical(logits=logit)
+        log_probs = dist.log_prob(action)
+        entropy = dist.entropy()
         return log_probs, entropy
 
     def gae(self, signals, values, dones, normalize=True):
@@ -244,6 +170,8 @@ class MAPPO:
             advantages: (T, ...) Advantage estimates
             returns: (T, ...) Target values
         """
+        # Ensure the same of values and signals
+        assert signals.shape[0] == values.shape[0] - 1 == dones.shape[0]
 
         T = signals.shape[0]
         advantages = torch.zeros_like(signals)
@@ -268,11 +196,183 @@ class MAPPO:
         """
         # get the data from the buffer
         (
-            states,
-            masks,
-            actions,
-            log_probs,
-            rewards,
-            dones,
-            violations,
+            states,  # num_agents x trajectory length x state_dim
+            masks,  # num_agents x trajectory length x num_actions x action_dim
+            actions,  # num_agents x trajectory length x num_actions
+            log_probs,  # num_agents x trajectory length x num_actions
+            rewards,  # num_agents x trajectory length x 1
+            next_states,  # num_agents x trajectory length x state_dim
+            dones,  # num_agents x trajectory length x 1
+            violations,  # num_agents x trajectory length x 1
         ) = self.buffer.get()
+
+        list_advantages = []
+        list_returns = []
+
+        for agent_idx in range(self.num_agents):
+
+            # Get the state values from the target critics
+            agent_values = self.critics_target[agent_idx](
+                states[agent_idx]
+            ).detach()  # trajectory length x 1
+
+            # Get the next state values from the target critics
+            next_agent_values = self.critics_target[agent_idx](
+                next_states[agent_idx]
+            ).detach()
+
+            # Prepare the values for the GAE : concat the last value to the end of the trajectory
+            agent_values = torch.cat(
+                [agent_values, next_agent_values[-1].unsqueeze(0)], dim=0
+            )
+
+            # if using lagrangian penalty, apply it to the rewards
+            if self.use_lagrange:
+                rewards[agent_idx] = (
+                    rewards[agent_idx] - self.penalty_coeff * violations[agent_idx]
+                )
+
+            # compute discounted returns, advantages
+            agent_advantages, agent_returns = self.gae(
+                rewards[agent_idx], agent_values, dones[agent_idx]
+            )
+
+            # save the advantages and returns
+            list_advantages.append(agent_advantages)
+            list_returns.append(agent_returns)
+
+        # convert to tensor
+        advantages = torch.stack(list_advantages, dim=0)
+        returns = torch.stack(list_returns, dim=0)
+
+        # create dataset for each agent
+        datasets = [
+            torch.utils.data.TensorDataset(
+                states[agent_idx],  # trajectory length x state_dim
+                masks[agent_idx],  # trajectory length x num_actions x action_dim
+                actions[agent_idx],  # trajectory length x num_actions
+                log_probs[agent_idx],  # trajectory length x num_actions
+                advantages[agent_idx],  # trajectory length x 1
+                returns[agent_idx],  # trajectory length x 1
+            )
+            for agent_idx in range(self.num_agents)
+        ]
+
+        # create mini batches for each agent
+        mini_batches = [
+            torch.utils.data.DataLoader(
+                dataset,
+                batch_size=self.mini_batch_size,
+                shuffle=True,
+                drop_last=True,
+            )
+            for dataset in datasets
+        ]
+
+        for _ in trange(self.num_epochs, desc="Epochs"):
+            for agent_idx in trange(self.num_agents, desc="Agents", leave=False):
+                avg_actor_loss, avg_entropy_loss, avg_critic_loss = (
+                    0.0,
+                    0.0,
+                    0.0,
+                )
+                # update the actor and critic
+                for (
+                    state,
+                    mask,
+                    action,
+                    old_log_prob,
+                    advantage,
+                    return_,
+                ) in tqdm(
+                    mini_batches[agent_idx],
+                    desc=f"Mini-batch Agent {agent_idx}",
+                    leave=False,
+                ):
+                    # evaluate the policy
+                    new_log_prob, entropy = self.evaluate(
+                        agent_idx, state, mask, action
+                    )
+
+                    # calculate the ratio
+                    ratio = torch.exp(new_log_prob - old_log_prob)
+
+                    # calculate the surrogate loss
+                    surr1 = ratio * advantage
+                    surr2 = torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage
+
+                    # surrogate loss
+                    surrogate_loss = -torch.min(surr1, surr2).mean()
+
+                    # entropy loss
+                    entropy_loss = self.entropy_coeff * entropy.mean()
+
+                    # calculate the actor loss
+                    actor_loss = surrogate_loss + entropy_loss
+
+                    # update the actor
+                    self.actor_optimizers[agent_idx].zero_grad()
+                    actor_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        self.actors[agent_idx].parameters(), max_norm=0.5
+                    )
+                    self.actor_optimizers[agent_idx].step()
+
+                    # update the critic
+                    critic_loss = torch.nn.functional.smooth_l1_loss(
+                        self.critics[agent_idx](state), return_
+                    )
+
+                    self.critic_optimizers[agent_idx].zero_grad()
+                    critic_loss.backward()
+                    self.critic_optimizers[agent_idx].step()
+
+                    # log the losses
+                    avg_actor_loss += actor_loss.item()
+                    avg_entropy_loss += entropy_loss.item()
+                    avg_critic_loss += critic_loss.item()
+
+                    # soft update the target critics
+                    self.soft_update()
+
+                # normalize the losses
+                avg_actor_loss /= len(mini_batches[agent_idx])
+                avg_entropy_loss /= len(mini_batches[agent_idx])
+                avg_critic_loss /= len(mini_batches[agent_idx])
+
+                # log the losses
+                if self.writer is not None:
+                    self.writer.add_scalar(
+                        f"actor_loss/agent_{agent_idx}",
+                        avg_actor_loss,
+                        self.global_step,
+                    )
+                    self.writer.add_scalar(
+                        f"entropy_loss/agent_{agent_idx}",
+                        avg_entropy_loss,
+                        self.global_step,
+                    )
+                    self.writer.add_scalar(
+                        f"critic_loss/agent_{agent_idx}",
+                        avg_critic_loss,
+                        self.global_step,
+                    )
+
+            self.global_step += 1
+
+        # update the penalty coefficient if using lagrangian penalty
+        if self.use_lagrange:
+            self.penalty_coeff += self.penalty_lr * (violations.mean()).detach()
+            self.penalty_coeff = max(0, min(self.penalty_coeff, 10))
+
+    def soft_update(self):
+        """
+        Soft update the target critics.
+        """
+        for i in range(self.num_agents):
+            for target_param, param in zip(
+                self.critics_target[i].parameters(), self.critics[i].parameters()
+            ):
+                target_param.data.copy_(
+                    self.tau * param.data + (1.0 - self.tau) * target_param.data
+                )

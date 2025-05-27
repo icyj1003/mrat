@@ -104,7 +104,7 @@ class Environment:
         delivery_deadline_min: float = 100,
         edge_capacity: float = 2 * 1024,
         edge_cost: float = 1,
-        vehicle_capacity: float = 1 * 1024,
+        vehicle_capacity: float = 0.5 * 1024,
         vehicle_cost: float = 3,
         v2i_pc5_coverage: float = 500,
         v2i_wifi_coverage: float = 100,
@@ -302,6 +302,20 @@ class Environment:
         self.update_mobility_status()
 
     def greedy_projection(self, actions) -> None:  # num_vehicle x num_rats
+        # bring action to cpu
+        device = actions.device
+        if device.type == "cuda":
+            actions = actions.cpu()
+
+        # check the shape of the actions
+        joined = False
+        if len(actions.shape) == 2:  # current shape is num_vehicles x num_rats
+            pass
+        elif (
+            len(actions.shape) == 1
+        ):  # current shape is num_vehicles * num_rats (joined)
+            actions = actions.view(self.num_vehicles, self.num_rats)
+            joined = True
 
         # compute the v2v action overload
         v2v_overload = max(
@@ -312,14 +326,17 @@ class Environment:
         if v2v_overload > 0:
             v2v_index = torch.where(actions[:, 1] == 1)[0]
             priorities = torch.argsort(
-                self.remaining_segments[v2v_index] / self.remaining_deadline[v2v_index],
+                torch.tensor(
+                    self.remaining_deadline[v2v_index]
+                    / self.remaining_segments[v2v_index]
+                ),
                 dim=0,
             ).squeeze()
 
-            while v2v_overload > 0:
+            while v2v_overload > 0 and priorities.numel() > 0:
                 actions[priorities[0], 1] = 0
                 v2v_overload -= 1
-                priorities = torch.delete(priorities, 0)
+                priorities = priorities[1:]  # delete the first element
 
         # for each edge, check if the v2i pc5 and wifi actions are overloaded
         for edge_index in range(self.num_edges):
@@ -337,8 +354,10 @@ class Environment:
             )
             if v2i_pc5_overload > 0:
                 priorities = torch.argsort(
-                    self.remaining_segments[pc5_index]
-                    / self.remaining_deadline[pc5_index],
+                    torch.tensor(
+                        self.remaining_deadline[pc5_index]
+                        / self.remaining_segments[pc5_index]
+                    ),
                     dim=0,
                 ).squeeze()
 
@@ -361,8 +380,10 @@ class Environment:
             )
             if v2i_wifi_overload > 0:
                 priorities = torch.argsort(
-                    self.remaining_segments[wifi_index]
-                    / self.remaining_deadline[wifi_index],
+                    torch.tensor(
+                        self.remaining_deadline[wifi_index]
+                        / self.remaining_segments[wifi_index]
+                    ),
                     dim=0,
                 ).squeeze()
                 while v2i_wifi_overload > 0 and priorities.numel() > 0:
@@ -370,13 +391,17 @@ class Environment:
                     v2i_wifi_overload -= 1
                     priorities = priorities[1:]
 
-        return actions
+        # bring action back to the original shape
+        if joined:
+            actions = actions.view(-1)
+
+        return actions.to(device)
 
     def compute_violation(self):
         deadline_cost = np.where(
             (self.delay - self.delivery_deadline[self.requested]) > 0, 1, 0
         ).reshape(-1, 1)
-
+        deadline_cost = deadline_cost * (1 - self.delivery_done.reshape(-1, 1))
         return deadline_cost
 
     # State Management
@@ -496,7 +521,7 @@ class Environment:
         # remaining segments of uncompleted tasks (0 if task is done) | shape: (num_vehicles,)
         self.remaining_segments = (
             (self.num_code_min[self.requested] - self.collected)
-            .clip(min=0)
+            .clip(min=1e-8)
             .reshape(-1, 1)
         )
 
@@ -872,7 +897,7 @@ class Environment:
         )  # cost per bit
 
         # compute the reward, dones, and violations
-        self.rewards = (delay_term + cost_term).reshape(-1, 1)
+        self.rewards = (delay_term * 0 + cost_term).reshape(-1, 1)
         self.dones = self.delivery_done.astype(float).reshape(-1, 1)
         self.violations = self.compute_violation()
 
