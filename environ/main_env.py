@@ -1,85 +1,11 @@
-from typing import Any, List, Literal, Union
 import numpy as np
 import torch
 from scipy.stats import truncnorm
 
-
-# Utility Functions
-def zipf(num_items, alpha) -> np.ndarray:
-    """
-    Generate a Zipf distribution for the given number of items and alpha parameter.
-    Args:
-        num_items (int): Number of items.
-        alpha (float): Zipf distribution parameter.
-    Returns:
-        np.ndarray: Zipf distribution probabilities.
-    """
-    z = np.arange(1, num_items + 1)
-    zipf_dist = 1 / (z**alpha)
-    zipf_dist /= np.sum(zipf_dist)
-    return zipf_dist
+from environ.utils import compute_data_rate, zipf
+from environ.markov import MarkovTransitionModel
 
 
-def compute_data_rate(
-    allocated_spectrum: float,
-    transmission_power: float,
-    noise_power: float,
-    distance: Union[float, np.ndarray],
-    path_loss_model: Literal["macro", "micro"] = "macro",
-) -> Union[float, np.ndarray]:
-    """
-    Compute the data rate based on the Shannon-Hartley theorem.
-    Args:
-        allocated_spectrum (float): Allocated spectrum in Hz.
-        transmission_power (float): Transmission power in dBm.
-        noise_power (float): Noise power in dBm.
-        distance (Union[float, np.ndarray]): Distance in meters.
-        path_loss_model (str): Path loss model, either "macro" or "micro".
-    Returns:
-        float: Data rate in bps.
-    """
-    if path_loss_model == "macro":
-        path_loss = 128.1 + 37.6 * np.log10(max(distance * 1e-3, 1e-6))  # Avoid log(0)
-    elif path_loss_model == "micro":
-        path_loss = 140.7 + 36.7 * np.log10(max(distance * 1e-3, 1e-6))
-    else:
-        raise ValueError("Invalid path loss model")
-
-    received_power = transmission_power - path_loss
-    noise_power_linear = 10 ** ((noise_power - 30) / 10)
-    received_power_linear = 10 ** ((received_power - 30) / 10)
-
-    # Calculate the data rate using Shannon-Hartley theorem
-    snr = max(
-        received_power_linear / noise_power_linear, 1e-9
-    )  # Avoid division by zero
-    data_rate = allocated_spectrum * np.log2(1 + snr)
-    return data_rate
-
-
-# Models
-class MarkovTransitionModel:
-    """
-    A Markov Transition Model for state transitions.
-    """
-
-    def __init__(self, states: List[Any], random_state=None):
-        self.states = states
-        self.num_states = len(states)
-        self.transition_matrix = np.full(
-            (self.num_states, self.num_states), 1 / self.num_states
-        )
-        self.random = random_state or np.random  # Use provided random state or default
-        self.value = self.random.choice(self.states)
-
-    def step(self) -> Any:
-        current = self.states.index(self.value)
-        next_state = self.random.choice(self.states, p=self.transition_matrix[current])
-        self.value = next_state
-        return next_state
-
-
-# Environment Class
 class Environment:
     """
     Main environment class for simulating vehicle mobility and content delivery.
@@ -87,28 +13,34 @@ class Environment:
 
     def __init__(
         self,
+        # Simulation Meta-parameters
         dt: float = 0.1,
+        seed: int = 42,
         num_vehicles: int = 30,
         num_edges: int = 4,
         num_items: int = 200,
-        seed: int = 42,
+        # Road and Mobility
         road_length: float = 2000.0,
         road_width: float = 15.0,
         num_lanes: int = 4,
         vmin: float = 8.0,
         vmax: float = 12.0,
+        # Content & Coding
         item_size_max: float = 500,
         item_size_min: float = 50,
         code_size: float = 32 * 1024 * 8,
         delivery_deadline_max: float = 300,
         delivery_deadline_min: float = 100,
+        # Storage
         edge_capacity: float = 2 * 1024,
+        vehicle_capacity: float = 0.1 * 1024,
         edge_cost: float = 1,
-        vehicle_capacity: float = 0.5 * 1024,
         vehicle_cost: float = 3,
+        # Coverage (in meters)
         v2i_pc5_coverage: float = 500,
         v2i_wifi_coverage: float = 100,
         v2v_pc5_coverage: float = 100,
+        # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
         v2n_bandwidth: float = 0.5 * 1e6,
         v2v_bandwidth_max: float = 20e6,
@@ -117,55 +49,39 @@ class Environment:
         v2i_pc5_bandwidth: float = 1e6,
         v2i_wifi_bandwidth_max: float = 80e6,
         v2i_wifi_bandwidth: float = 5e6,
+        # Transmission Cost
         v2n_cost: float = 10,
         v2i_pc5_cost: float = 1,
         v2i_wifi_cost: float = 0.8,
         v2v_cost: float = 0.8,
+        # Transmission Power (dBm)
         v2n_transmission_power: float = 35,
         v2i_pc5_transmission_power: float = 33,
         v2i_wifi_transmission_power: float = 25,
         v2v_transmission_power: float = 30,
+        # Noise & Rates
         noise_power: float = -174,
         i2i_data_rate: float = 150e6,
         i2n_data_rate: float = 100e6,
         i2i_cost: float = 0.3,
         i2n_cost: float = 8,
-        delay_weight: float = 1e9,
-        cost_weight: float = 5,
+        # Cost and Delay Scaling
+        storage_cost_scale: float = 1e-9,
+        delay_scale: float = 1e9,
+        cost_scale: float = 10,
+        delay_weight: float = 0.7,
+        cost_weight: float = 0.3,
     ):
-        # Main parameters
+        # Set core meta-parameters
         self.dt = dt
+        self.seed = seed
         self.num_vehicles = num_vehicles
         self.num_edges = num_edges
         self.num_items = num_items
-        self.seed = seed
         self.np_random = np.random.RandomState(seed)
         self.num_rats = 4
 
-        # Content model
-        self.alpha = MarkovTransitionModel(
-            states=[0.1, 0.8, 1.0, 1.2], random_state=self.np_random
-        )
-        self.requests_frequency = self.np_random.randint(
-            1, 1000, size=self.num_items
-        )  # Dummy requests frequency
-
-        self.delivery_deadline = self.np_random.randint(
-            delivery_deadline_min, delivery_deadline_max, size=self.num_items
-        )
-
-        self.delivery_deadline_max = delivery_deadline_max
-        self.delivery_deadline_min = delivery_deadline_min
-        self.code_size = code_size
-        self.item_size = (
-            self.np_random.randint(item_size_min, item_size_max, size=self.num_items)
-            * 1024
-            * 1024
-            * 8
-        )  # Convert to bits
-        self.num_code_min = np.ceil(self.item_size / self.code_size).astype(int)
-
-        # Mobility model
+        # Road configuration
         self.road_length = road_length
         self.road_width = road_width
         self.num_lanes = num_lanes
@@ -173,7 +89,7 @@ class Environment:
         self.vmin = vmin
         self.vmax = vmax
 
-        # Edge parameters
+        # Edge and BS positions
         self.edge_positions = np.stack(
             [
                 np.ones(num_edges)
@@ -186,18 +102,39 @@ class Environment:
             ],
             axis=1,
         )
-
-        # BS parameters
         self.bs_positions = (self.road_length / 2, self.road_width / 2)
 
-        #
+        # Content & coding
+        self.code_size = code_size
+        self.delivery_deadline_max = delivery_deadline_max
+        self.delivery_deadline_min = delivery_deadline_min
+        self.delivery_deadline = self.np_random.randint(
+            delivery_deadline_min, delivery_deadline_max, size=self.num_items
+        )
+        self.item_size = (
+            self.np_random.randint(item_size_min, item_size_max, size=self.num_items)
+            * 1024
+            * 1024
+            * 8
+        )
+        self.num_code_min = np.ceil(self.item_size / self.code_size).astype(int)
+        self.alpha = MarkovTransitionModel(
+            states=[0.8, 0.9, 1.0, 1.2], random_state=self.np_random
+        )
+        self.requests_frequency = self.np_random.randint(1, 20, size=self.num_items)
+
+        # Storage capacities and costs
         self.edge_capacity = edge_capacity
         self.edge_cost = edge_cost
         self.vehicle_capacity = vehicle_capacity
         self.vehicle_cost = vehicle_cost
+
+        # Coverage parameters
         self.v2i_pc5_coverage = v2i_pc5_coverage
         self.v2i_wifi_coverage = v2i_wifi_coverage
         self.v2v_pc5_coverage = v2v_pc5_coverage
+
+        # Bandwidth parameters
         self.v2n_bandwidth_max = v2n_bandwidth_max
         self.v2n_bandwidth = v2n_bandwidth
         self.v2v_bandwidth_max = v2v_bandwidth_max
@@ -206,21 +143,38 @@ class Environment:
         self.v2i_pc5_bandwidth = v2i_pc5_bandwidth
         self.v2i_wifi_bandwidth_max = v2i_wifi_bandwidth_max
         self.v2i_wifi_bandwidth = v2i_wifi_bandwidth
+
+        # Communication costs
         self.v2n_cost = v2n_cost
         self.v2i_pc5_cost = v2i_pc5_cost
         self.v2i_wifi_cost = v2i_wifi_cost
         self.v2v_cost = v2v_cost
+        self.i2i_cost = i2i_cost
+        self.i2n_cost = i2n_cost
+
+        # Transmission power
         self.v2n_transmission_power = v2n_transmission_power
         self.v2i_pc5_transmission_power = v2i_pc5_transmission_power
         self.v2i_wifi_transmission_power = v2i_wifi_transmission_power
         self.v2v_transmission_power = v2v_transmission_power
         self.noise_power = noise_power
+
+        # Data rate
         self.i2i_data_rate = i2i_data_rate
         self.i2n_data_rate = i2n_data_rate
-        self.i2i_cost = i2i_cost
-        self.i2n_cost = i2n_cost
+
+        # Cost and delay scaling
+        self.delay_scale = delay_scale
+        self.cost_scale = cost_scale
         self.delay_weight = delay_weight
         self.cost_weight = cost_weight
+        self.storage_cost_scale = storage_cost_scale
+
+        # Initialize cache status
+        self.cache = self.np_random.randint(
+            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        )
+        self.cache[self.num_edges :, :] = 0  # zero out vehicle cache
 
     # Initialization Methods
     def reset(self) -> None:
@@ -228,40 +182,95 @@ class Environment:
         Reset the environment, including content library and mobility model.
         """
         self.steps = 0
-        self.done = False
         self.reset_request()
         self.reset_mobility()
         self.set_states()
 
+    def large_step(self, actions, vehicle_list):
+        # Step 1: Convert actions to numpy if needed
+        if isinstance(actions, torch.Tensor):
+            actions = actions.cpu().numpy()
+
+        # Step 2: Separate actions for edges and vehicles
+        vehicle_actions = actions[-1, :]
+        edge_actions = actions[:-1, :]
+
+        # Step 3: Identify new content being cached on edges
+        not_in_cache = (edge_actions > 0) & (self.cache[: self.num_edges, :] == 0)
+        not_in_cache_size = np.sum(
+            np.stack([self.item_size] * self.num_edges) * not_in_cache
+        )
+
+        # Step 4: Calculate size of items to be cached on vehicles
+        vehicle_size = np.sum(self.item_size.reshape(1, -1) * (vehicle_actions > 0))
+
+        # Step 5: Update edge cache
+        self.cache[: self.num_edges, :] = edge_actions
+
+        # Step 6: Update vehicle caches
+        for vehicle_index in vehicle_list:
+            self.cache[self.num_edges + vehicle_index, :] = vehicle_actions
+
+        # Step 7: Update simulation states
+        self.set_states()
+
+        # Step 8: Compute total cost
+        total_cost = (
+            not_in_cache_size * self.edge_cost
+            + vehicle_size * self.vehicle_cost * len(vehicle_list)
+        )
+
+        return total_cost
+
     def reset_request(self) -> None:
         """
-        Reset and assign requests matrix.
+        Reset and assign the requests matrix for all vehicles.
         """
-        # Update the Zipf alpha parameter
+
+        # Step 1: Evolve the Zipf alpha parameter
         self.alpha.step()
 
-        # Sort content library by the requests frequency
-        sorted_indices = np.argsort(self.requests_frequency)[::-1]
+        # Step 2: Sort content by current request frequency
+        sorted_indices = np.argsort(self.requests_frequency)[::-1]  # descending order
+        sorted_inverse = np.argsort(sorted_indices)  # for restoring original order
 
-        # Generate requests probabilities from Zipf distribution
-        self.requests_probs = zipf(self.num_items, self.alpha.value)[sorted_indices]
+        # Step 3: Estimate normalized content popularity
+        freq_min = self.requests_frequency.min()
+        freq_max = self.requests_frequency.max()
+        self.estimated_content_popularity = (self.requests_frequency - freq_min) / (
+            freq_max - freq_min + 1e-6
+        )  # +1e-6 avoids division by zero
 
-        # Sample the requests matrix
+        # Step 4: Build cache states for caching policy
+        content_density = (
+            self.item_size.reshape(1, -1) / 8 / 1024 / 1024  # bits → MB
+        ) / self.delivery_deadline.reshape(1, -1)
+
+        self.cache_states = np.concatenate(
+            [
+                self.cache[: self.num_edges, :],
+                self.estimated_content_popularity.reshape(1, -1),
+                content_density,
+            ],
+            axis=0,
+        )
+
+        # Step 5: Generate Zipf-based request probabilities and reorder
+        self.requests_probs = zipf(self.num_items, self.alpha.value)[sorted_inverse]
+
+        # Step 6: Generate request matrix (one request per vehicle)
         self.requests_matrix = np.zeros((self.num_vehicles, self.num_items))
         for i in range(self.num_vehicles):
-            self.requests_matrix[
-                i, self.np_random.choice(self.num_items, size=1, p=self.requests_probs)
-            ] = 1
+            requested_item = self.np_random.choice(
+                self.num_items, size=1, p=self.requests_probs
+            )
+            self.requests_matrix[i, requested_item] = 1
 
-        # Update the requests frequency
+        # Step 7: Update request frequency and tracking
         self.requests_frequency = np.sum(self.requests_matrix, axis=0)
-        self.cache = self.np_random.randint(
-            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
-        )
-        # self.cache = np.ones((self.num_edges + self.num_vehicles, self.num_items))
-
         self.requested = np.argmax(self.requests_matrix, axis=1)
 
+        # Step 8: Reset delivery status tracking
         self.delivery_done = np.zeros(self.num_vehicles)
         self.collected = np.zeros(self.num_vehicles)
         self.delay = np.zeros(self.num_vehicles)
@@ -404,6 +413,17 @@ class Environment:
         deadline_cost = deadline_cost * (1 - self.delivery_done.reshape(-1, 1))
         return deadline_cost
 
+    def channel_utility_rate(self, actions: np.ndarray) -> np.ndarray:
+        """
+        For each type of link, count the number of vehicles that are using it to see which link vehicle prefers
+        """
+
+        # convert to numpy array if actions is a tensor
+        if isinstance(actions, torch.Tensor):
+            actions = actions.cpu().numpy()
+
+        return np.sum(actions, axis=0) / self.num_vehicles
+
     # State Management
     def set_states(self) -> None:
         """
@@ -446,17 +466,29 @@ class Environment:
         # if delivery is done, force disable all actions (mask 1)
         self.masks[self.delivery_done == 1, :, 1] = 1
 
-        self.connection_status = np.zeros((self.num_vehicles, 5))
+        self.connection_status = np.zeros((self.num_vehicles, 6))
         """ 
         0: cache available in nearby vehicle
         1: cache available in local edge
         2: cache available in neighbor edge
         3: number of vehicle in local pc5 coverage
         4: number of vehicle in local wifi coverage
+        5: cache available in the vehicle
         """
 
         # cache in nearby vehicle
         self.connection_status[:, 0] = 1 - self.masks[:, 1, 1]
+
+        # cache in the vehicle
+        for vehicle_index in range(self.num_vehicles):
+            if (
+                self.cache[
+                    self.num_edges + vehicle_index, self.requested[vehicle_index]
+                ]
+                == 1
+            ):
+                self.connection_status[vehicle_index, 5] = 1
+                self.masks[vehicle_index, :, 1] = 1
 
         # cache in local edge
         self.connection_status[in_bound_mask, 1] = (
@@ -612,6 +644,14 @@ class Environment:
 
         self.velocities = vt_next
 
+    def is_small_done(self) -> bool:
+        """
+        Check if all vehicles have completed their deliveries.
+        Returns:
+            bool: True if all deliveries are done, False otherwise.
+        """
+        return np.all(self.delivery_done == 1)
+
     def step_position(self) -> None:
         """
         Update the positions of vehicles based on their velocities and direction.
@@ -635,7 +675,6 @@ class Environment:
         new_cost = np.zeros(self.num_vehicles)
         new_delay = np.zeros(self.num_vehicles)
         new_collected = np.zeros(self.num_vehicles)
-        reward = 0
 
         # convert torch tensor to numpy array
         if isinstance(actions, torch.Tensor):
@@ -647,6 +686,14 @@ class Environment:
 
             # ignore if request has been satisfied
             if self.delivery_done[vehicle_index] == 1:
+                continue
+
+            # if reqested item is inside the vehicle cache, skip the download
+            if self.cache[self.num_edges + vehicle_index, requested_item] == 1:
+                new_delay[vehicle_index] = 0
+                new_collected[vehicle_index] = self.num_code_min[requested_item] + 1
+                new_cost[vehicle_index] = 0
+                self.delivery_done[vehicle_index] = 1
                 continue
 
             new_delay[vehicle_index] = self.dt
@@ -890,16 +937,20 @@ class Environment:
 
         # compute cost and delay terms
         delay_term = (
-            -self.delay_weight * self.delay / self.item_size[self.requested]
+            -self.delay_scale * self.delay / self.item_size[self.requested]
         )  # delay per bit
         cost_term = (
-            -self.cost_weight * self.cost / self.item_size[self.requested]
+            -self.cost_scale * self.cost / self.item_size[self.requested]
         )  # cost per bit
 
         # compute the reward, dones, and violations
-        self.rewards = (delay_term * 0 + cost_term).reshape(-1, 1)
+        self.rewards = (
+            cost_term * self.cost_weight + delay_term * self.delay_weight
+        ).reshape(-1, 1)
+
         self.dones = self.delivery_done.astype(float).reshape(-1, 1)
         self.violations = self.compute_violation()
+        self.ultility = self.channel_utility_rate(actions)
 
         # update env
         self.step_velocity()

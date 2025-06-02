@@ -1,17 +1,12 @@
 import copy
+from typing import *
+
 import torch
 import torch.nn.functional as F
-import torch.nn as nn
-from typing import *
-
 from tqdm import tqdm
-from buffer import RolloutBuffer
-from common import Actor, Critic
 
-
-from typing import *
-
-import torch
+from agent.buffer import RolloutBuffer
+from agent.common import Actor, Critic
 
 
 class PPO:
@@ -21,50 +16,57 @@ class PPO:
 
     def __init__(
         self,
-        state_dim,
         num_actions,
         action_dim,
+        state_dim,
         hidden_dim=64,
         lr=3e-4,
-        num_epoch=10,
-        eps=0.2,
+        num_epochs=10,
+        clip_range=0.2,
         gamma=0.99,
-        lam=0.95,
+        gae_lambda=0.95,
         tau=1e-3,
         mini_batch_size=64,
+        vf_coeff=0.5,
         entropy_coeff=0.01,
-        penalty_coeff=1,
+        penalty_coeff=1.0,
         penalty_lr=1e-3,
+        max_grad_norm=0.5,
         device="cpu",
         writer=None,
+        use_lagrange=True,
     ):
 
         # Hyperparameters
-        self.state_dim = state_dim
         self.num_actions = num_actions
         self.action_dim = action_dim
+        self.state_dim = state_dim
         self.hidden_dim = hidden_dim
         self.lr = lr
-        self.num_epoch = num_epoch
-        self.eps = eps
+        self.num_epochs = num_epochs
+        self.clip_range = clip_range
         self.gamma = gamma
-        self.lam = lam
-        self.mini_batch_size = mini_batch_size
+        self.gae_lambda = gae_lambda
         self.tau = tau
+        self.vf_coeff = vf_coeff
         self.entropy_coeff = entropy_coeff
         self.penalty_coeff = penalty_coeff
         self.penalty_lr = penalty_lr
+        self.max_grad_norm = max_grad_norm
+        self.mini_batch_size = mini_batch_size
         self.device = device
         self.writer = writer
-        self.steps = 0
+        self.use_lagrange = use_lagrange
 
         # define networks
         self.actor = Actor(state_dim, num_actions, action_dim, hidden_dim).to(device)
         self.critic = Critic(state_dim, hidden_dim).to(device)
         self.critic_target = copy.deepcopy(self.critic)
 
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
+        self.optimizer = torch.optim.Adam(
+            list(self.actor.parameters()) + list(self.critic.parameters()),
+            lr=self.lr,
+        )
 
         self.buffer = RolloutBuffer(
             device=device,
@@ -72,17 +74,6 @@ class PPO:
         self.global_step = 0
 
     def act(self, state, mask, projection=None):
-        """
-        Sample an action from the actor network given the current state and mask.
-        Args:
-            state (torch.Tensor): Current state.
-            mask (torch.Tensor): Action mask.
-            projection (callable, optional): Function to project raw actions to valid action space.
-        Returns:
-            torch.Tensor: Sampled action.
-            torch.Tensor: Log probability of the sampled action.
-        """
-
         # Add batch dimension
         state = state.unsqueeze(0).to(self.device)
         mask = mask.unsqueeze(0).to(self.device)
@@ -108,15 +99,6 @@ class PPO:
         return valid_actions, log_probs
 
     def evaluate(self, states, masks, actions):
-        """
-        Compute log probabilities of actions given states and masks.
-        Args:
-            states (torch.Tensor): Current states.
-            masks (torch.Tensor): Action masks.
-            actions (torch.Tensor): Actions taken.
-        Returns:
-            torch.Tensor: Log probabilities of actions.
-        """
         # Compute logits from the actor network
         logits = self.actor(states, masks)  # [batch_size, num_actions, action_dim]
 
@@ -159,7 +141,7 @@ class PPO:
             not_done = 1.0 - dones[t]
             delta = signals[t] + self.gamma * values[t + 1] * not_done - values[t]
             advantages[t] = last_adv = (
-                delta + self.gamma * self.lam * not_done * last_adv
+                delta + self.gamma * self.gae_lambda * not_done * last_adv
             )
 
         returns = advantages + values[:-1]
@@ -190,7 +172,9 @@ class PPO:
         values = torch.cat((values, next_values[-1].unsqueeze(0)), dim=0)
 
         # lagrangian penalty
-        rewards = rewards - self.penalty_coeff * violations
+        if self.use_lagrange:
+            # apply penalty to rewards
+            rewards = rewards - self.penalty_coeff * violations
 
         # compute advantages and returns
         advantages, returns = self.gae(rewards, values, dones, normalize=True)
@@ -212,7 +196,7 @@ class PPO:
         )
 
         # Update the actor and critic networks
-        for _ in tqdm(range(self.num_epoch), desc="Epochs"):
+        for _ in tqdm(range(self.num_epochs), desc="Epochs"):
             avg_actor_loss, avg_entropy_loss, avg_critic_loss = (
                 0.0,
                 0.0,
@@ -226,9 +210,6 @@ class PPO:
                 advantage_batch,
                 return_batch,
             ) in tqdm(dataloader, desc="PPO minibatch"):
-                # Update the actor network
-                self.actor_optimizer.zero_grad()
-
                 # Compute new log probabilities
                 new_log_probs, entropy = self.evaluate(
                     state_batch, mask_batch, action_batch
@@ -238,53 +219,70 @@ class PPO:
                 ratio = torch.exp(new_log_probs - old_log_probs_batch)
 
                 # Compute the surrogate loss
-                surrogate_loss = -torch.min(
-                    ratio * advantage_batch,
-                    torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage_batch,
-                ).mean()
+                surr1 = ratio * advantage_batch
+                surr2 = (
+                    torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+                    * advantage_batch
+                )
+
+                # Surrogate loss
+                surrogate_loss = -torch.min(surr1, surr2).mean()
 
                 # Compute the entropy loss
-                entropy_loss = self.entropy_coeff * entropy.mean()
+                entropy_loss = -entropy.mean()
+
+                # Critic loss
+                critic_loss = torch.nn.functional.mse_loss(
+                    self.critic(state_batch), return_batch
+                )
 
                 # Total loss
-                actor_loss = surrogate_loss + entropy_loss
+                loss = (
+                    surrogate_loss
+                    + self.vf_coeff * critic_loss
+                    + self.entropy_coeff * entropy_loss
+                )
 
-                # Backpropagation
-                actor_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
-                self.actor_optimizer.step()
+                # update
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    list(self.actor.parameters()) + list(self.critic.parameters()),
+                    self.max_grad_norm,
+                )
+                self.optimizer.step()
 
-                # Update the critic network
-                self.critic_optimizer.zero_grad()
-
-                # Compute the critic loss
-                critic_loss = F.smooth_l1_loss(self.critic(state_batch), return_batch)
-
-                # Backpropagation
-                critic_loss.backward()
-                self.critic_optimizer.step()
+                # Accumulate losses
+                avg_actor_loss += surrogate_loss.item()
+                avg_entropy_loss += entropy_loss.item()
+                avg_critic_loss += critic_loss.item()
 
                 # Update the target network
                 self.soft_update()
-
-                # Accumulate losses
-                avg_actor_loss += actor_loss.item()
-                avg_entropy_loss += entropy_loss.item()
-                avg_critic_loss += critic_loss.item()
 
             # Average losses over the mini-batches
             avg_actor_loss /= len(dataloader)
             avg_entropy_loss /= len(dataloader)
             avg_critic_loss /= len(dataloader)
-            self.writer.add_scalar("actor_loss", avg_actor_loss, self.global_step)
-            self.writer.add_scalar("entropy_loss", avg_entropy_loss, self.global_step)
-            self.writer.add_scalar("critic_loss", avg_critic_loss, self.global_step)
+
+            # Log the losses
+            if self.writer is not None:
+                self.writer.add_scalar(
+                    "small_loss/actor_loss", avg_actor_loss, self.global_step
+                )
+                self.writer.add_scalar(
+                    "small_loss/entropy_loss", avg_entropy_loss, self.global_step
+                )
+                self.writer.add_scalar(
+                    "small_loss/critic_loss", avg_critic_loss, self.global_step
+                )
 
             self.global_step += 1
 
         # update penalty coefficient
-        self.penalty_coeff += self.penalty_lr * (violations.mean()).detach()
-        self.penalty_coeff = max(0, min(self.penalty_coeff, 1))
+        if self.use_lagrange:
+            self.penalty_coeff += self.penalty_lr * (violations.mean()).detach()
+            self.penalty_coeff = max(0, min(self.penalty_coeff, 1))
 
         # clear the buffer
         self.buffer.clear()
