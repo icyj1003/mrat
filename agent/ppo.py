@@ -16,6 +16,7 @@ class PPO:
 
     def __init__(
         self,
+        name,
         num_actions,
         action_dim,
         state_dim,
@@ -36,6 +37,8 @@ class PPO:
         writer=None,
         use_lagrange=True,
     ):
+
+        self.name = name
 
         # Hyperparameters
         self.num_actions = num_actions
@@ -268,13 +271,13 @@ class PPO:
             # Log the losses
             if self.writer is not None:
                 self.writer.add_scalar(
-                    "small_loss/actor_loss", avg_actor_loss, self.global_step
+                    f"{self.name}_loss/actor_loss", avg_actor_loss, self.global_step
                 )
                 self.writer.add_scalar(
-                    "small_loss/entropy_loss", avg_entropy_loss, self.global_step
+                    f"{self.name}_loss/entropy_loss", avg_entropy_loss, self.global_step
                 )
                 self.writer.add_scalar(
-                    "small_loss/critic_loss", avg_critic_loss, self.global_step
+                    f"{self.name}_loss/critic_loss", avg_critic_loss, self.global_step
                 )
 
             self.global_step += 1

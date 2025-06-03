@@ -10,6 +10,7 @@ from agent.common import Actor, Critic
 class MAPPO:
     def __init__(
         self,
+        name,
         num_agents,
         num_actions,
         action_dim,
@@ -31,6 +32,8 @@ class MAPPO:
         writer=None,
         use_lagrange=True,
     ):
+
+        self.name = name
 
         # Hyperparameters
         self.num_agents = num_agents
@@ -91,6 +94,8 @@ class MAPPO:
 
         if projection is not None:
             valid_actions = projection(actions)
+        else:
+            valid_actions = actions
 
         # calculate log probs
         for i in range(self.num_agents):
@@ -308,17 +313,17 @@ class MAPPO:
             # log the losses
             if self.writer is not None:
                 self.writer.add_scalar(
-                    f"loss/actor_loss",
+                    f"{self.name}_loss/actor_loss",
                     avg_actor_loss,
                     self.global_step,
                 )
                 self.writer.add_scalar(
-                    f"loss/entropy_loss",
+                    f"{self.name}_loss/entropy_loss",
                     avg_entropy_loss,
                     self.global_step,
                 )
                 self.writer.add_scalar(
-                    f"loss/critic_loss",
+                    f"{self.name}_loss/critic_loss",
                     avg_critic_loss,
                     self.global_step,
                 )

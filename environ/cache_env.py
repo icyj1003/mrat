@@ -5,7 +5,6 @@ class CacheEnv:
     def __init__(
         self,
         old_cache,
-        init_states,
         num_edges,
         num_items,
         item_sizes,
@@ -16,7 +15,6 @@ class CacheEnv:
         cost_scale,
     ):
         self.old_cache = old_cache
-        self.init_states = init_states
         self.num_edges = num_edges
         self.num_items = num_items
         self.item_sizes = item_sizes / 8 / 1024 / 1024  # convert to MB
@@ -27,15 +25,21 @@ class CacheEnv:
         self.vehicle_cost = vehicle_cost
         self.cost_scale = cost_scale
 
-    def reset(self):
+    def reset(
+        self,
+        init_states,
+    ):
         self.cache_status = np.zeros((self.total_locations, self.num_items))
         self.remaining_capacity = np.ones(self.total_locations) * self.edge_capacity
         self.remaining_capacity[-1] = self.vehicle_capacity
+        self.init_states = init_states.copy()  # initial cache states
 
         self.compute_states()
         self.compute_masks()
 
-    def compute_states(self):
+    def compute_states(
+        self,
+    ):
         self.states = np.concatenate(
             [self.cache_status, self.init_states],
             axis=0,

@@ -1,8 +1,58 @@
-from typing import Literal, Union
-
 import numpy as np
 
 from environ import CacheEnv, Environment
+
+
+def log_episode(
+    writer, env, episode, accumulated_rewards, cummulated_cache_cost, mode="train"
+):
+    writer.add_scalar(
+        f"{mode}/log/cache_cost",
+        -np.sum(cummulated_cache_cost),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"{mode}/log/objective",
+        np.sum(cummulated_cache_cost) + np.mean(accumulated_rewards),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"{mode}/log/episode_length",
+        len(accumulated_rewards),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"{mode}/log/mean_delay",
+        np.mean(env.delay),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"{mode}/log/mean_reward",
+        np.mean(accumulated_rewards),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"{mode}/log/mean_deadline_violation",
+        np.clip(np.mean(env.delay - env.delivery_deadline[env.requested]), 0, None),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"{mode}/log/delay per segment",
+        np.mean(env.delay / env.num_code_min[env.requested]),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"{mode}/log/cost_per_bit",
+        np.mean(env.cost / env.item_size[env.requested]),
+        episode,
+    )
 
 
 def create_environment(args):
@@ -24,7 +74,6 @@ def create_environment(args):
 
     cache_env = CacheEnv(
         old_cache=env.cache[: args.num_edges, :],
-        init_states=env.cache_states,
         num_edges=args.num_edges,
         num_items=args.num_items,
         item_sizes=env.item_size,
@@ -35,5 +84,5 @@ def create_environment(args):
         cost_scale=env.storage_cost_scale,
     )
 
-    cache_env.reset()
+    cache_env.reset(init_states=env.cache_states)
     return env, cache_env

@@ -7,6 +7,8 @@ from scipy.stats import truncnorm
 def GTVS(
     env,
     min_vehicles: int = 3,
+    DT: int = 10,
+    T: int = 100,
 ) -> List[int]:
     """
     Greedy Vehicle Set Covering (GTVS) algorithm to select vehicles based on their coverage
@@ -27,18 +29,15 @@ def GTVS(
     Returns:
         List[int]: Indices of selected vehicles that cover the positions over the time horizon.
     """
-    init_positions = init_positions.copy()
-    init_velocities = init_velocities.copy()
-    direction = direction.copy()
-    vmin = float(vmin)
-    vmax = float(vmax)
-    dt = float(dt)
-    coverage_radius = float(coverage_radius)
-    sigma = float(sigma)
-    DT = int(DT)
-    T = int(T)
-    min_vehicles = int(min_vehicles)
-    seed = int(seed)
+    init_positions = env.positions.copy()
+    velocities = env.velocities.copy()
+    direction = env.direction.copy()
+    vmin = float(env.vmin)
+    vmax = float(env.vmax)
+    dt = float(env.dt)
+    coverage_radius = float(env.v2v_pc5_coverage)
+    sigma = 0.5
+    seed = 42
 
     np_random = np.random.RandomState(seed)
     num_vehicles = init_positions.shape[0]
