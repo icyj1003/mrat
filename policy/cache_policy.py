@@ -28,7 +28,7 @@ class RandomCachePolicy(CachePolicy):
 
     def act(self, states, masks, projection=None):
         super().act()
-        logits = torch.rand(self.num_edges, self.num_items) + masks * -1e10
+        logits = torch.rand((self.num_edges + 1) * self.num_items) + masks * -1e10
         distribution = torch.distributions.Categorical(logits=logits)
         actions = distribution.sample()
         # If projection is provided, apply it to the actions
@@ -56,7 +56,7 @@ class PPOCachePolicy(CachePolicy):
             num_epochs=args.num_epoch,
             clip_range=args.clip_range,
             gamma=1,
-            gae_lambda=args.gae_lambda,
+            gae_lambda=1,
             tau=args.tau,
             entropy_coeff=args.entropy_coeff,
             penalty_coeff=args.penalty_coeff,
@@ -101,7 +101,6 @@ class PPOCachePolicy(CachePolicy):
 
     def merge_rewards(self, mean_delivery_rewards):
         super().merge_rewards()
-        normalized_mean_reward = mean_delivery_rewards / len(self.agent.buffer.rewards)
-        self.agent.buffer.rewards = [
-            _ + normalized_mean_reward for _ in self.agent.buffer.rewards
-        ]
+        self.agent.buffer.rewards[-1] = torch.tensor(
+            [mean_delivery_rewards], dtype=torch.float32
+        )

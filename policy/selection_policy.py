@@ -6,8 +6,8 @@ from scipy.stats import truncnorm
 
 def GTVS(
     env,
-    min_vehicles: int = 3,
-    DT: int = 10,
+    min_vehicles: int = 2,
+    DT: int = 1,
     T: int = 100,
 ) -> List[int]:
     """

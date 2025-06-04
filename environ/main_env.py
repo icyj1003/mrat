@@ -33,9 +33,9 @@ class Environment:
         delivery_deadline_min: float = 100,
         # Storage
         edge_capacity: float = 2 * 1024,
-        vehicle_capacity: float = 0.1 * 1024,
-        edge_cost: float = 1,
-        vehicle_cost: float = 3,
+        vehicle_capacity: float = 0.5 * 1024,
+        edge_cost: float = 0,
+        vehicle_cost: float = 1,
         # Coverage (in meters)
         v2i_pc5_coverage: float = 500,
         v2i_wifi_coverage: float = 100,
@@ -50,7 +50,7 @@ class Environment:
         v2i_wifi_bandwidth_max: float = 80e6,
         v2i_wifi_bandwidth: float = 5e6,
         # Transmission Cost
-        v2n_cost: float = 10,
+        v2n_cost: float = 8,
         v2i_pc5_cost: float = 1,
         v2i_wifi_cost: float = 0.8,
         v2v_cost: float = 0.8,
@@ -61,14 +61,14 @@ class Environment:
         v2v_transmission_power: float = 30,
         # Noise & Rates
         noise_power: float = -174,
-        i2i_data_rate: float = 150e6,
-        i2n_data_rate: float = 100e6,
+        i2i_data_rate: float = 100e6,
+        i2n_data_rate: float = 150e6,
         i2i_cost: float = 0.3,
-        i2n_cost: float = 8,
+        i2n_cost: float = 30,
         # Cost and Delay Scaling
-        storage_cost_scale: float = 1e-9,
+        storage_cost_scale: float = 1e-10,
         delay_scale: float = 1e9,
-        cost_scale: float = 10,
+        cost_scale: float = 1,
         delay_weight: float = 0.7,
         cost_weight: float = 0.3,
     ):
@@ -119,7 +119,7 @@ class Environment:
         )
         self.num_code_min = np.ceil(self.item_size / self.code_size).astype(int)
         self.alpha = MarkovTransitionModel(
-            states=[0.8, 0.9, 1.0, 1.2], random_state=self.np_random
+            states=[0.3, 0.4, 0.8, 0.9], random_state=self.np_random
         )
         self.requests_frequency = self.np_random.randint(1, 20, size=self.num_items)
 
@@ -171,10 +171,13 @@ class Environment:
         self.storage_cost_scale = storage_cost_scale
 
         # Initialize cache status
-        self.cache = self.np_random.randint(
-            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        # self.cache = self.np_random.randint(
+        #     0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        # )
+        # self.cache[self.num_edges :, :] = 0  # zero out vehicle cache
+        self.cache = np.zeros(
+            (self.num_edges + self.num_vehicles, self.num_items), dtype=int
         )
-        self.cache[self.num_edges :, :] = 0  # zero out vehicle cache
 
     # Initialization Methods
     def reset(self) -> None:
@@ -182,6 +185,8 @@ class Environment:
         Reset the environment, including content library and mobility model.
         """
         self.steps = 0
+        self.ultility = []
+        self.hit_ratio = []
         self.reset_request()
         self.reset_mobility()
         self.set_states()
@@ -226,7 +231,7 @@ class Environment:
         """
         Reset and assign the requests matrix for all vehicles.
         """
-
+        self.cache[self.num_edges :, :] = 0  # zero out vehicle cache
         # Step 1: Evolve the Zipf alpha parameter
         self.alpha.step()
 
@@ -524,8 +529,9 @@ class Environment:
             if self.local_edge_distance[vehicle_index] < self.v2i_wifi_coverage:
                 counts[edge_index, 1] += 1
 
-                # if the vehicle is in wifi coverage, force disable v2i wifi
-                self.masks[vehicle_index, 3][1] = 1
+            # if the vehicle is not in wifi coverage, force disable wifi (mask 1)
+            else:
+                self.masks[vehicle_index, 3, 1] = 1
 
         max_pc5 = self.v2i_wifi_bandwidth_max / self.v2i_pc5_bandwidth
         max_wifi = self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth
@@ -675,6 +681,8 @@ class Environment:
         new_cost = np.zeros(self.num_vehicles)
         new_delay = np.zeros(self.num_vehicles)
         new_collected = np.zeros(self.num_vehicles)
+        hit_action = np.zeros_like(actions)
+        new_hitrate = np.zeros(self.num_vehicles)
 
         # convert torch tensor to numpy array
         if isinstance(actions, torch.Tensor):
@@ -688,7 +696,7 @@ class Environment:
             if self.delivery_done[vehicle_index] == 1:
                 continue
 
-            # if reqested item is inside the vehicle cache, skip the download
+            # if requested item is inside the vehicle cache, skip the download
             if self.cache[self.num_edges + vehicle_index, requested_item] == 1:
                 new_delay[vehicle_index] = 0
                 new_collected[vehicle_index] = self.num_code_min[requested_item] + 1
@@ -780,8 +788,11 @@ class Environment:
 
                     # accumulate the cost
                     new_cost[vehicle_index] = (
-                        self.v2n_cost * v2v_transfered_segment * self.code_size
+                        self.v2v_cost * v2v_transfered_segment * self.code_size
                     )
+
+                    # mark the hit action
+                    hit_action[vehicle_index, 1] = 1
 
             # download with v2i pc5 and vehicle is not out of the road
             if actions[vehicle_index, 2] == 1 and self.out[vehicle_index] == 0:
@@ -809,6 +820,9 @@ class Environment:
                         self.v2i_pc5_cost * v2i_pc5_transfered_segment * self.code_size
                     )
 
+                    # mark the hit action
+                    hit_action[vehicle_index, 2] = 1
+
                 # if the edge does not have the requested item
                 else:
                     # check for the nearest neighbor edge (by hop count) that has the requested item
@@ -827,25 +841,34 @@ class Environment:
                         v2i_pc5_transfered_segment = np.floor(
                             self.dt
                             * self.i2i_data_rate
+                            * data_rate
                             / (
                                 self.code_size
-                                * (data_rate + self.i2i_data_rate * hop_distance)
+                                * (data_rate * hop_distance + self.i2i_data_rate)
                             )
                         )
                         # accumulate the cost
                         new_cost[vehicle_index] = (
                             self.i2i_cost * v2i_pc5_transfered_segment * self.code_size
                         )
+
+                        # mark the hit action
+                        hit_action[vehicle_index, 2] = 1
+
                     # if there is no neighbor edge that has the requested item, use backhaul link
                     else:
                         v2i_pc5_transfered_segment = np.floor(
                             self.dt
                             * self.i2n_data_rate
+                            * data_rate
                             / (self.code_size * (data_rate + self.i2n_data_rate))
                         )
-                        # accumulate the cost
+                        # accumulate the cost: i2n + v2i_pc5
                         new_cost[vehicle_index] = (
                             self.i2n_cost * v2i_pc5_transfered_segment * self.code_size
+                            + self.v2i_pc5_cost
+                            * v2i_pc5_transfered_segment
+                            * self.code_size
                         )
 
                 # accumulate the collected segments
@@ -883,6 +906,9 @@ class Environment:
                             * self.code_size
                         )
 
+                        # mark the hit action
+                        hit_action[vehicle_index, 3] = 1
+
                     # if the edge does not have the requested item
                     else:
                         # check for the nearest neighbor edge (by hop count) that has the requested item
@@ -901,6 +927,7 @@ class Environment:
                             v2i_wifi_transfered_segment = np.floor(
                                 self.dt
                                 * self.i2i_data_rate
+                                * data_rate
                                 / (
                                     self.code_size
                                     * (data_rate + self.i2i_data_rate * hop_distance)
@@ -911,17 +938,28 @@ class Environment:
                                 self.i2i_cost
                                 * v2i_wifi_transfered_segment
                                 * self.code_size
+                                + self.v2i_wifi_cost
+                                * v2i_wifi_transfered_segment
+                                * self.code_size
                             )
+
+                            # mark the hit action
+                            hit_action[vehicle_index, 3] = 1
+
                         # if there is no neighbor edge that has the requested item, use backhaul link
                         else:
                             v2i_wifi_transfered_segment = np.floor(
                                 self.dt
                                 * self.i2n_data_rate
+                                * data_rate
                                 / (self.code_size * (data_rate + self.i2n_data_rate))
                             )
                             # accumulate the cost
                             new_cost[vehicle_index] = (
                                 self.i2n_cost
+                                * v2i_wifi_transfered_segment
+                                * self.code_size
+                                + self.v2i_wifi_cost
                                 * v2i_wifi_transfered_segment
                                 * self.code_size
                             )
@@ -935,22 +973,47 @@ class Environment:
         self.delay += new_delay
         self.collected += new_collected
 
+        # hit ratio for each action
+        hit_sum = np.sum(hit_action, axis=0)[1:]
+        action_sum = np.sum(actions, axis=0)[1:]
+        mask = action_sum > 0
+        sum_hit = np.zeros_like(hit_sum)
+        sum_hit[mask] = hit_sum[mask] / action_sum[mask]
+        v2v = sum_hit[0]
+        v2i_wifi = sum_hit[1]
+        v2i_pc5 = sum_hit[2]
+        if (v2i_wifi == 0) and (v2i_pc5 == 0):
+            v2i = 0
+        elif v2i_wifi == 0 and v2i_pc5 > 0:
+            v2i = v2i_pc5
+        elif v2i_wifi > 0 and v2i_pc5 == 0:
+            v2i = v2i_wifi
+        elif v2i_wifi == v2i_pc5 and v2i_wifi > 0:
+            v2i = v2i_wifi
+
+        self.new_hit = np.array([v2v, v2i], dtype=np.float32)
+        self.hit_ratio.append(self.new_hit)
+
         # compute cost and delay terms
         delay_term = (
-            -self.delay_scale * self.delay / self.item_size[self.requested]
+            -self.delay_weight
+            * self.delay_scale
+            * self.delay
+            / self.item_size[self.requested]
         )  # delay per bit
         cost_term = (
-            -self.cost_scale * self.cost / self.item_size[self.requested]
+            -self.cost_weight
+            * self.cost_scale
+            * self.cost
+            / self.item_size[self.requested]
         )  # cost per bit
 
         # compute the reward, dones, and violations
-        self.rewards = (
-            cost_term * self.cost_weight + delay_term * self.delay_weight
-        ).reshape(-1, 1)
+        self.rewards = (cost_term + delay_term).reshape(-1, 1)
 
         self.dones = self.delivery_done.astype(float).reshape(-1, 1)
         self.violations = self.compute_violation()
-        self.ultility = self.channel_utility_rate(actions)
+        self.ultility.append(self.channel_utility_rate(actions))
 
         # update env
         self.step_velocity()

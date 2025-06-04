@@ -3,54 +3,72 @@ import numpy as np
 from environ import CacheEnv, Environment
 
 
-def log_episode(
-    writer, env, episode, accumulated_rewards, cummulated_cache_cost, mode="train"
-):
-    writer.add_scalar(
-        f"{mode}/log/cache_cost",
-        -np.sum(cummulated_cache_cost),
-        episode,
-    )
+def log_episode(writer, env, episode, accumulated_rewards, cummulated_cache_cost):
 
     writer.add_scalar(
-        f"{mode}/log/objective",
-        np.sum(cummulated_cache_cost) + np.mean(accumulated_rewards),
-        episode,
-    )
-
-    writer.add_scalar(
-        f"{mode}/log/episode_length",
-        len(accumulated_rewards),
-        episode,
-    )
-
-    writer.add_scalar(
-        f"{mode}/log/mean_delay",
-        np.mean(env.delay),
-        episode,
-    )
-
-    writer.add_scalar(
-        f"{mode}/log/mean_reward",
+        f"log/mean_reward",
         np.mean(accumulated_rewards),
         episode,
     )
 
     writer.add_scalar(
-        f"{mode}/log/mean_deadline_violation",
-        np.clip(np.mean(env.delay - env.delivery_deadline[env.requested]), 0, None),
-        episode,
-    )
-
-    writer.add_scalar(
-        f"{mode}/log/delay per segment",
+        f"log/delay_per_segment",
         np.mean(env.delay / env.num_code_min[env.requested]),
         episode,
     )
 
     writer.add_scalar(
-        f"{mode}/log/cost_per_bit",
+        f"log/cost_per_bit",
         np.mean(env.cost / env.item_size[env.requested]),
+        episode,
+    )
+
+    ultility = np.array(env.ultility).mean(axis=0)
+
+    writer.add_scalar(
+        f"log/v2n_u",
+        ultility[0],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/v2v_u",
+        ultility[1],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/v2i_wifi_u",
+        ultility[2],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/v2i_pc5_u",
+        ultility[3],
+        episode,
+    )
+
+    hit_rate = np.array(env.hit_ratio).mean(axis=0)
+
+    writer.add_scalar(
+        f"log/hit_rate_v2i",
+        hit_rate[1],
+        episode,
+    )
+
+    writer.add_scalar(
+        f"log/cache_cost",
+        -np.sum(cummulated_cache_cost),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"log/episode_length",
+        len(accumulated_rewards),
+        episode,
+    )
+
+    writer.add_scalar(
+        f"log/mean_deadline_violation",
+        np.clip(np.mean(env.delay - env.delivery_deadline[env.requested]), 0, None),
         episode,
     )
 

@@ -54,7 +54,7 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
             action_dim=2,
             state_dim=env.state_dim,
             hidden_dim=args.hidden_dim,
-            lr=args.lr * 1e-1,
+            lr=args.lr,
             num_epochs=args.num_epoch,
             clip_range=args.clip_range,
             gamma=args.gamma,

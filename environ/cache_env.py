@@ -92,7 +92,7 @@ class CacheEnv:
                     * 8
                 )
         else:
-            reward += (
+            reward += -(
                 self.vehicle_cost
                 * self.cost_scale
                 * self.item_sizes[item_index]

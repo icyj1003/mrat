@@ -6,18 +6,19 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from config import parse_args
-from policy.cache_policy import PPOCachePolicy
+from policy.cache_policy import PPOCachePolicy, RandomCachePolicy
 from policy.delivery_policy import MAPPODeliveryPolicy
 from policy.selection_policy import GTVS
 from utils import create_environment, log_episode
 
-current = datetime.datetime.now().strftime("%Y_%m_%d %H:%M:%S")
-writer = SummaryWriter(log_dir=f"runs/full_{current}")
+current = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+writer = SummaryWriter(log_dir=f"runs/{current}")
 
 
 if __name__ == "__main__":
     args = parse_args()
     env, cache_env = create_environment(args)
+
     cache_model = PPOCachePolicy(
         args,
         writer=writer,
@@ -29,7 +30,9 @@ if __name__ == "__main__":
     )
 
     # Begin training loop
-    for episode in tqdm(range(args.episode), desc="Training", unit="episode"):
+    for episode in tqdm(
+        range(args.episode + args.evaluation_episodes), desc="Running", unit="episode"
+    ):
         accumulated_rewards = []
         cummulated_cache_cost = []
 
@@ -57,7 +60,7 @@ if __name__ == "__main__":
             cummulated_cache_cost.append(reward)
 
             # create tensors
-            reward_tensor = torch.tensor([reward], dtype=torch.float32)
+            reward_tensor = torch.tensor([0], dtype=torch.float32)
             next_state_tensor = torch.tensor(cache_env.states, dtype=torch.float32)
             done_tensor = torch.tensor([cache_env.is_done()], dtype=torch.float32)
             violation_tensor = torch.tensor([0], dtype=torch.float32)
@@ -123,10 +126,12 @@ if __name__ == "__main__":
             ):
                 delivery_model.train()
 
-        cache_model.merge_rewards(np.mean(accumulated_rewards))
+        cache_model.merge_rewards(
+            np.mean(accumulated_rewards) - total_cost * env.storage_cost_scale
+        )
 
         # update the cache model
-        if episode > 0 and episode % 5 == 0:
+        if episode > 0 and episode % 30 == 0:
             cache_model.train()
 
         log_episode(
@@ -135,7 +140,6 @@ if __name__ == "__main__":
             episode,
             accumulated_rewards,
             cummulated_cache_cost,
-            mode="train",
         )
 
         env.reset()
