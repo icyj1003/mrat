@@ -4,6 +4,9 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description="Configuration for the application.")
     parser.add_argument(
+        "--name", type=str, default="default", help="Name of the run for logging"
+    )
+    parser.add_argument(
         "--num_vehicles", type=int, default=20, help="Number of vehicles"
     )
     parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")

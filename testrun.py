@@ -11,12 +11,11 @@ from policy.delivery_policy import MAPPODeliveryPolicy
 from policy.selection_policy import GTVS
 from utils import create_environment, log_episode
 
-current = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-writer = SummaryWriter(log_dir=f"runs/{current}")
-
 
 if __name__ == "__main__":
     args = parse_args()
+    current = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    writer = SummaryWriter(log_dir=f"runs/{current}_{args.name}")
     env, cache_env = create_environment(args)
 
     cache_model = PPOCachePolicy(
