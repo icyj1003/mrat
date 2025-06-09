@@ -18,7 +18,7 @@ class Environment:
         seed: int = 42,
         num_vehicles: int = 30,
         num_edges: int = 4,
-        num_items: int = 200,
+        num_items: int = 100,
         # Road and Mobility
         road_length: float = 2000.0,
         road_width: float = 15.0,
@@ -42,8 +42,8 @@ class Environment:
         v2v_pc5_coverage: float = 100,
         # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
-        v2n_bandwidth: float = 0.5 * 1e6,
-        v2v_bandwidth_max: float = 20e6,
+        v2n_bandwidth: float = 0.25 * 1e6,
+        v2v_bandwidth_max: float = 100e6,
         v2v_bandwidth: float = 1e6,
         v2i_pc5_bandwidth_max: float = 20e6,
         v2i_pc5_bandwidth: float = 1e6,
@@ -175,6 +175,7 @@ class Environment:
         #     0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
         # )
         # self.cache[self.num_edges :, :] = 0  # zero out vehicle cache
+
         self.cache = np.zeros(
             (self.num_edges + self.num_vehicles, self.num_items), dtype=int
         )
@@ -213,8 +214,10 @@ class Environment:
         self.cache[: self.num_edges, :] = edge_actions
 
         # Step 6: Update vehicle caches
-        for vehicle_index in vehicle_list:
-            self.cache[self.num_edges + vehicle_index, :] = vehicle_actions
+        # for vehicle_index in vehicle_list:
+        #     self.cache[self.num_edges + vehicle_index, :] = vehicle_actions
+        # Step 6.1: Store all cache in vehicles
+        self.cache[self.num_edges :, :] = 1
 
         # Step 7: Update simulation states
         self.set_states()
@@ -293,6 +296,10 @@ class Environment:
         # Calculate y-coordinates based on lane indices and lane spacing
         lane_indices = self.np_random.randint(0, self.num_lanes, size=self.num_vehicles)
         self.direction = np.where(lane_indices < self.num_lanes / 2, -1, 1)
+
+        # Generate x coordinates based on the direction of the lanes
+        # x = np.where(lane_indices < self.num_lanes / 2, self.road_length, 0)
+
         y = lane_indices * self.distance_between_lanes + self.distance_between_lanes / 2
 
         # Assign positions
@@ -493,7 +500,6 @@ class Environment:
                 == 1
             ):
                 self.connection_status[vehicle_index, 5] = 1
-                self.masks[vehicle_index, :, 1] = 1
 
         # cache in local edge
         self.connection_status[in_bound_mask, 1] = (

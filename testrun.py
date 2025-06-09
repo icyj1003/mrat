@@ -9,7 +9,7 @@ from config import parse_args
 from policy.cache_policy import PPOCachePolicy, RandomCachePolicy
 from policy.delivery_policy import MAPPODeliveryPolicy
 from policy.selection_policy import GTVS
-from utils import create_environment, log_episode
+from utils import create_environment, log_episode, sum_metrics
 
 
 if __name__ == "__main__":
@@ -27,6 +27,8 @@ if __name__ == "__main__":
         env,
         writer=writer,
     )
+
+    evaluate = []
 
     # Begin training loop
     for episode in tqdm(
@@ -133,7 +135,7 @@ if __name__ == "__main__":
         if episode > 0 and episode % 30 == 0:
             cache_model.train()
 
-        log_episode(
+        info = log_episode(
             writer,
             env,
             episode,
@@ -141,5 +143,12 @@ if __name__ == "__main__":
             cummulated_cache_cost,
         )
 
+        if episode >= args.episode:
+            evaluate.append(info)
+
         env.reset()
         cache_env.reset(init_states=env.cache_states)
+
+    metrics = sum_metrics(evaluate)
+
+    pass

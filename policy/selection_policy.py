@@ -1,13 +1,15 @@
 from typing import List
 
+from matplotlib.patches import Circle
 import numpy as np
 from scipy.stats import truncnorm
+import matplotlib.pyplot as plt
 
 
 def GTVS(
     env,
     min_vehicles: int = 2,
-    DT: int = 1,
+    DT: int = 5,
     T: int = 100,
 ) -> List[int]:
     """
@@ -53,10 +55,10 @@ def GTVS(
                 a, b, loc=mu, scale=sigma, random_state=np_random
             )
         velocities = vt_next
-
-        positions.append(
-            positions[-1] + velocities[:, np.newaxis] * direction[:, np.newaxis] * dt
-        )
+        updated_x = velocities * direction * dt
+        updated_y = np.zeros(num_vehicles)  # Assuming no vertical movement
+        new_positions = positions[-1] + np.column_stack((updated_x, updated_y))
+        positions.append(new_positions)
 
     experiment_positions = np.stack(positions)[np.arange(0, T, DT)]
 
@@ -96,3 +98,21 @@ def GTVS(
             covered_by_selected.append(coverage_vehicles[best_vehicle])
 
     return selected_vehicles
+
+
+# def plot(init_positions, coverage_radius, selected_vehicles, name="coverage_plot"):
+#     fig, ax = plt.subplots(figsize=(20, 3))
+
+#     # Plot the initial positions of the vehicles
+#     for x, y in init_positions[selected_vehicles]:
+#         circ = Circle((x, y), radius=coverage_radius, alpha=1, color="blue")
+#         ax.add_patch(circ)
+
+#     for x, y in init_positions:
+#         ax.plot(x, y, "ro", markersize=5, alpha=1)
+
+#     ax.set_xlim(0, 2000)
+#     # ax.set_ylim(0, 15)
+#     ax.set_aspect("equal", adjustable="box")
+#     plt.grid(True)
+#     plt.savefig(f"{name}.png")
