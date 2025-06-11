@@ -121,18 +121,12 @@ def create_environment(args):
     env.reset()
 
     cache_env = CacheEnv(
-        old_cache=env.cache[: args.num_edges, :],
-        num_edges=args.num_edges,
-        num_items=args.num_items,
-        item_sizes=env.item_size,
-        edge_capacity=env.edge_capacity,
-        vehicle_capacity=env.vehicle_capacity,
-        edge_cost=env.edge_cost,
-        vehicle_cost=env.vehicle_cost,
-        cost_scale=env.storage_cost_scale,
+        main_env=env,
     )
 
-    cache_env.reset(init_states=env.cache_states)
+    cache_env.reset(
+        new_main_env=env,
+    )
     return env, cache_env
 
 

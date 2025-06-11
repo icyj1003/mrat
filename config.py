@@ -9,10 +9,13 @@ def parse_args():
     parser.add_argument(
         "--num_vehicles", type=int, default=20, help="Number of vehicles"
     )
-    parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
+    parser.add_argument("--num_edges", type=int, default=2, help="Number of edges")
     parser.add_argument("--num_items", type=int, default=100, help="Number of items")
 
     parser.add_argument("--episode", type=int, default=3000, help="Number of episodes")
+    parser.add_argument(
+        "--warmup_episodes", type=int, default=0, help="Warmup episodes"
+    )
     parser.add_argument(
         "--evaluation_episodes", type=int, default=100, help="Evaluation episodes"
     )
@@ -73,7 +76,7 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--dt", type=int, default=1, help="Time step size")
-    parser.add_argument("--cost_weight", type=float, default=1, help="Cost weight")
-    parser.add_argument("--delay_weight", type=float, default=0, help="Delay weight")
+    parser.add_argument("--cost_weight", type=float, default=0.5, help="Cost weight")
+    parser.add_argument("--delay_weight", type=float, default=0.5, help="Delay weight")
 
     return parser.parse_args()

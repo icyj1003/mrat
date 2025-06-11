@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from agent.buffer import RolloutBuffer
-from agent.common import Actor, Critic
+from agent.common import Actor, Critic, TransformerActor, TransformerCritic
 
 
 class PPO:
@@ -62,11 +62,15 @@ class PPO:
         self.use_lagrange = use_lagrange
 
         # define networks
-        self.actor = Actor(state_dim, num_actions, action_dim, hidden_dim).to(device)
-        self.critic = Critic(state_dim, hidden_dim).to(device)
+        self.actor = TransformerActor(
+            input_dim=self.state_dim, hidden_dim=hidden_dim
+        ).to(device)
+        self.critic = TransformerCritic(
+            input_dim=self.state_dim, hidden_dim=hidden_dim
+        ).to(device)
         self.critic_target = copy.deepcopy(self.critic)
 
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.RMSprop(
             list(self.actor.parameters()) + list(self.critic.parameters()),
             lr=self.lr,
         )
@@ -170,8 +174,17 @@ class PPO:
         ) = self.buffer.get()
 
         # prepare values for GAE
-        values = self.critic(states).detach()
-        next_values = self.critic_target(next_states).detach()
+        # Compute values in mini-batches to reduce memory usage
+        def get_values_in_batches(model, data, batch_size=32):
+            values_list = []
+            with torch.no_grad():
+                for i in range(0, data.size(0), batch_size):
+                    batch = data[i : i + batch_size]
+                    values_list.append(model(batch))
+            return torch.cat(values_list, dim=0)
+
+        values = get_values_in_batches(self.critic, states)
+        next_values = get_values_in_batches(self.critic_target, next_states)
         values = torch.cat((values, next_values[-1].unsqueeze(0)), dim=0)
 
         # lagrangian penalty

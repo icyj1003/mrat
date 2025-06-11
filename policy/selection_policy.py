@@ -8,29 +8,10 @@ import matplotlib.pyplot as plt
 
 def GTVS(
     env,
-    min_vehicles: int = 2,
+    min_vehicles: int = 1,
     DT: int = 5,
     T: int = 100,
 ) -> List[int]:
-    """
-    Greedy Vehicle Set Covering (GTVS) algorithm to select vehicles based on their coverage
-    capabilities over a time horizon.
-    Args:
-        init_positions (np.ndarray): Initial positions of vehicles (shape: [num_vehicles, 2]).
-        init_velocities (np.ndarray): Initial velocities of vehicles (shape: [num_vehicles,]).
-        direction (np.ndarray): Direction vector for vehicle movement (shape: [2,]).
-        vmin (float): Minimum velocity.
-        vmax (float): Maximum velocity.
-        dt (float): Time step size.
-        coverage_radius (float): Radius within which a vehicle can cover a position.
-        sigma (float): Standard deviation for the truncated normal distribution.
-        DT (int): Downsampling factor for the time steps.
-        T (int): Total number of time steps to simulate.
-        min_vehicles (int): Minimum number of vehicles to select based on coverage.
-        random_seed (int): Random seed for reproducibility.
-    Returns:
-        List[int]: Indices of selected vehicles that cover the positions over the time horizon.
-    """
     init_positions = env.positions.copy()
     velocities = env.velocities.copy()
     direction = env.direction.copy()

@@ -34,8 +34,8 @@ class Environment:
         # Storage
         edge_capacity: float = 2 * 1024,
         vehicle_capacity: float = 0.5 * 1024,
-        edge_cost: float = 0,
-        vehicle_cost: float = 1,
+        edge_cost: float = 1,
+        vehicle_cost: float = 3,
         # Coverage (in meters)
         v2i_pc5_coverage: float = 500,
         v2i_wifi_coverage: float = 100,
@@ -66,7 +66,7 @@ class Environment:
         i2i_cost: float = 0.3,
         i2n_cost: float = 30,
         # Cost and Delay Scaling
-        storage_cost_scale: float = 1e-10,
+        storage_cost_scale: float = 1e-3,
         delay_scale: float = 1e9,
         cost_scale: float = 1,
         delay_weight: float = 0.7,
@@ -118,10 +118,14 @@ class Environment:
             * 8
         )
         self.num_code_min = np.ceil(self.item_size / self.code_size).astype(int)
-        self.alpha = MarkovTransitionModel(
-            states=[0.3, 0.4, 0.8, 0.9], random_state=self.np_random
+        self.alpha = MarkovTransitionModel(states=[1.0], random_state=self.np_random)
+        self.requests_frequency = np.bincount(
+            self.np_random.choice(
+                np.arange(self.num_items),
+                size=self.num_vehicles,
+            ),
+            minlength=self.num_items,
         )
-        self.requests_frequency = self.np_random.randint(1, 20, size=self.num_items)
 
         # Storage capacities and costs
         self.edge_capacity = edge_capacity
@@ -192,6 +196,15 @@ class Environment:
         self.reset_mobility()
         self.set_states()
 
+    def random_large_step(self, **kwargs) -> None:
+        """
+        Perform a large step with random actions for all edges and vehicles.
+        """
+        self.cache = self.np_random.randint(
+            0, 2, size=(self.num_edges + self.num_vehicles, self.num_items)
+        )
+        self.set_states()
+
     def large_step(self, actions, vehicle_list):
         # Step 1: Convert actions to numpy if needed
         if isinstance(actions, torch.Tensor):
@@ -201,34 +214,14 @@ class Environment:
         vehicle_actions = actions[-1, :]
         edge_actions = actions[:-1, :]
 
-        # Step 3: Identify new content being cached on edges
-        not_in_cache = (edge_actions > 0) & (self.cache[: self.num_edges, :] == 0)
-        not_in_cache_size = np.sum(
-            np.stack([self.item_size] * self.num_edges) * not_in_cache
-        )
-
-        # Step 4: Calculate size of items to be cached on vehicles
-        vehicle_size = np.sum(self.item_size.reshape(1, -1) * (vehicle_actions > 0))
-
-        # Step 5: Update edge cache
+        # Step 3: Update edge cache
         self.cache[: self.num_edges, :] = edge_actions
 
-        # Step 6: Update vehicle caches
-        # for vehicle_index in vehicle_list:
-        #     self.cache[self.num_edges + vehicle_index, :] = vehicle_actions
-        # Step 6.1: Store all cache in vehicles
-        self.cache[self.num_edges :, :] = 1
+        # Step 4: Update vehicle caches
+        for vehicle_index in vehicle_list:
+            self.cache[self.num_edges + vehicle_index, :] = vehicle_actions
 
-        # Step 7: Update simulation states
         self.set_states()
-
-        # Step 8: Compute total cost
-        total_cost = (
-            not_in_cache_size * self.edge_cost
-            + vehicle_size * self.vehicle_cost * len(vehicle_list)
-        )
-
-        return total_cost
 
     def reset_request(self) -> None:
         """
@@ -240,31 +233,17 @@ class Environment:
 
         # Step 2: Sort content by current request frequency
         sorted_indices = np.argsort(self.requests_frequency)[::-1]  # descending order
-        sorted_inverse = np.argsort(sorted_indices)  # for restoring original order
 
         # Step 3: Estimate normalized content popularity
         freq_min = self.requests_frequency.min()
         freq_max = self.requests_frequency.max()
-        self.estimated_content_popularity = (self.requests_frequency - freq_min) / (
+        self.popularity = (self.requests_frequency - freq_min) / (
             freq_max - freq_min + 1e-6
         )  # +1e-6 avoids division by zero
 
-        # Step 4: Build cache states for caching policy
-        content_density = (
-            self.item_size.reshape(1, -1) / 8 / 1024 / 1024  # bits → MB
-        ) / self.delivery_deadline.reshape(1, -1)
-
-        self.cache_states = np.concatenate(
-            [
-                self.cache[: self.num_edges, :],
-                self.estimated_content_popularity.reshape(1, -1),
-                content_density,
-            ],
-            axis=0,
-        )
-
-        # Step 5: Generate Zipf-based request probabilities and reorder
-        self.requests_probs = zipf(self.num_items, self.alpha.value)[sorted_inverse]
+        # Step 5: Generate Zipf-based request probabilities(env side)
+        self.requests_probs = np.zeros(self.num_items)
+        self.requests_probs[sorted_indices] = zipf(self.num_items, self.alpha.value)
 
         # Step 6: Generate request matrix (one request per vehicle)
         self.requests_matrix = np.zeros((self.num_vehicles, self.num_items))
