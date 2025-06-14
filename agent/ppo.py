@@ -63,15 +63,14 @@ class PPO:
 
         # define networks
         self.actor = TransformerActor(
-            input_dim=self.state_dim, hidden_dim=hidden_dim
+            input_dim=self.state_dim,
+            hidden_dim=hidden_dim,
+            num_actions=num_actions,
+            action_dim=action_dim,
         ).to(device)
-        self.critic = TransformerCritic(
-            input_dim=self.state_dim, hidden_dim=hidden_dim
-        ).to(device)
-        self.critic_target = copy.deepcopy(self.critic)
 
-        self.optimizer = torch.optim.RMSprop(
-            list(self.actor.parameters()) + list(self.critic.parameters()),
+        self.optimizer = torch.optim.Adam(
+            self.actor.parameters(),
             lr=self.lr,
         )
 
@@ -83,7 +82,8 @@ class PPO:
     def act(self, state, mask, projection=None):
         # Add batch dimension
         state = state.unsqueeze(0).to(self.device)
-        mask = mask.unsqueeze(0).to(self.device)
+        if mask is not None:
+            mask = mask.unsqueeze(0).to(self.device)
 
         # Compute logits from the actor network
         logits = self.actor(state, mask).squeeze(
@@ -126,37 +126,6 @@ class PPO:
 
         return log_probs, entropy
 
-    def gae(self, signals, values, dones, normalize=True):
-        """
-        Generalized Advantage Estimation (GAE).
-        Args:
-            signals: (T, ...) Tensor of signals (rewards, violations, etc.)
-            values: (T+1, ...) Value estimates (bootstrap included)
-            dones: (T, ...) Episode done flags (1 if done, else 0)
-        Returns:
-            advantages: (T, ...) Advantage estimates
-            returns: (T, ...) Target values
-        """
-        # Ensure the same of values and signals
-        assert signals.shape[0] == values.shape[0] - 1 == dones.shape[0]
-
-        T = signals.shape[0]
-        advantages = torch.zeros_like(signals)
-        last_adv = 0
-
-        for t in reversed(range(T)):
-            not_done = 1.0 - dones[t]
-            delta = signals[t] + self.gamma * values[t + 1] * not_done - values[t]
-            advantages[t] = last_adv = (
-                delta + self.gamma * self.gae_lambda * not_done * last_adv
-            )
-
-        returns = advantages + values[:-1]
-        if normalize:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-        return advantages, returns
-
     def update(self):
         """
         Update the actor and critic networks using the PPO algorithm.
@@ -173,27 +142,16 @@ class PPO:
             violations,
         ) = self.buffer.get()
 
-        # prepare values for GAE
-        # Compute values in mini-batches to reduce memory usage
-        def get_values_in_batches(model, data, batch_size=32):
-            values_list = []
-            with torch.no_grad():
-                for i in range(0, data.size(0), batch_size):
-                    batch = data[i : i + batch_size]
-                    values_list.append(model(batch))
-            return torch.cat(values_list, dim=0)
-
-        values = get_values_in_batches(self.critic, states)
-        next_values = get_values_in_batches(self.critic_target, next_states)
-        values = torch.cat((values, next_values[-1].unsqueeze(0)), dim=0)
-
         # lagrangian penalty
         if self.use_lagrange:
             # apply penalty to rewards
             rewards = rewards - self.penalty_coeff * violations
 
         # compute advantages and returns
-        advantages, returns = self.gae(rewards, values, dones, normalize=True)
+        # advantages, returns = self.gae(rewards, values, dones, normalize=True)
+
+        # dont use gae
+        advantages = rewards
 
         # create mini-batches
         dataset = torch.utils.data.TensorDataset(
@@ -202,7 +160,6 @@ class PPO:
             actions,
             log_probs,
             advantages,
-            returns,
         )
 
         dataloader = torch.utils.data.DataLoader(
@@ -224,7 +181,6 @@ class PPO:
                 action_batch,
                 old_log_probs_batch,
                 advantage_batch,
-                return_batch,
             ) in tqdm(dataloader, desc="PPO minibatch"):
                 # Compute new log probabilities
                 new_log_probs, entropy = self.evaluate(
@@ -247,23 +203,14 @@ class PPO:
                 # Compute the entropy loss
                 entropy_loss = -entropy.mean()
 
-                # Critic loss
-                critic_loss = torch.nn.functional.mse_loss(
-                    self.critic(state_batch), return_batch
-                )
-
                 # Total loss
-                loss = (
-                    surrogate_loss
-                    + self.vf_coeff * critic_loss
-                    + self.entropy_coeff * entropy_loss
-                )
+                loss = surrogate_loss + self.entropy_coeff * entropy_loss
 
                 # update
                 self.optimizer.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(
-                    list(self.actor.parameters()) + list(self.critic.parameters()),
+                    self.actor.parameters(),
                     self.max_grad_norm,
                 )
                 self.optimizer.step()
@@ -271,15 +218,10 @@ class PPO:
                 # Accumulate losses
                 avg_actor_loss += surrogate_loss.item()
                 avg_entropy_loss += entropy_loss.item()
-                avg_critic_loss += critic_loss.item()
-
-                # Update the target network
-                self.soft_update()
 
             # Average losses over the mini-batches
             avg_actor_loss /= len(dataloader)
             avg_entropy_loss /= len(dataloader)
-            avg_critic_loss /= len(dataloader)
 
             # Log the losses
             if self.writer is not None:
@@ -288,9 +230,6 @@ class PPO:
                 )
                 self.writer.add_scalar(
                     f"{self.name}_loss/entropy_loss", avg_entropy_loss, self.global_step
-                )
-                self.writer.add_scalar(
-                    f"{self.name}_loss/critic_loss", avg_critic_loss, self.global_step
                 )
 
             self.global_step += 1
@@ -302,14 +241,3 @@ class PPO:
 
         # clear the buffer
         self.buffer.clear()
-
-    def soft_update(self):
-        """
-        Soft update the target networks.
-        """
-        for target_param, param in zip(
-            self.critic_target.parameters(), self.critic.parameters()
-        ):
-            target_param.data.copy_(
-                self.tau * param.data + (1 - self.tau) * target_param.data
-            )

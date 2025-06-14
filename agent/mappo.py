@@ -111,6 +111,7 @@ class MAPPO:
 
         # get the raw logits from the actor
         logit = self.actor(state, mask).squeeze(0)
+
         # calculate log probs
         dist = torch.distributions.Categorical(logits=logit)
         log_probs = dist.log_prob(action)

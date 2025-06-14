@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 class CacheEnv:
@@ -9,106 +10,63 @@ class CacheEnv:
         self.num_edges = main_env.num_edges
         self.num_items = main_env.num_items
         self.total_locations = self.num_edges + 1
+        self.item_size = main_env.item_size / 8 / 1024 / 1024  # Convert to MB
+        self.delivery_deadline = main_env.delivery_deadline
         self.edge_capacity = main_env.edge_capacity
-        self.vehicle_capacity = main_env.vehicle_capacity
-        self.item_sizes = main_env.item_size / 8 / 1024 / 1024  # convert to MB
-        self.item_deadlines = main_env.delivery_deadline
-        self.old_cache = main_env.cache.copy()
-        self.output_dim = (self.num_edges + 1) * self.num_items * 4
         self.edge_cost = main_env.edge_cost
-        self.vehicle_cost = main_env.vehicle_cost
-        self.scale = main_env.storage_cost_scale
 
     def reset(
         self,
         new_main_env,
     ):
-        self.cache_status = np.zeros((self.total_locations, self.num_items))
-        self.old_cache = new_main_env.cache.copy()
-        self.popularity = new_main_env.popularity.copy()
-        self.remaining_capacity = np.ones(self.total_locations) * self.edge_capacity
-        self.remaining_capacity[-1] = self.vehicle_capacity
+        self.requests_edges = new_main_env.requests_edges
+        self.old_cache = new_main_env.cache[: self.num_edges, :]
+        self.popularities = new_main_env.popularities
 
         self.compute_states()
-        self.compute_masks()
 
-    def compute_states(
-        self,
-    ):
-        # state will have shape m_i_k x dim in (num_edges + 1) * num_items * dim
-        # where m_{i,k} = [item_size[i], item_deadline[i], remaining_capacity[k], cache_status[k, i], old_cache[k, i], popularity[i], cost_multiplier]
-        self.states = np.zeros((self.total_locations * self.num_items, 7))
-        for i in range(self.num_items):
-            for k in range(self.total_locations):
-                self.states[i + k * self.num_items, 0] = self.item_sizes[i]
-                self.states[i + k * self.num_items, 1] = self.item_deadlines[i]
-                self.states[i + k * self.num_items, 2] = self.remaining_capacity[k]
-                self.states[i + k * self.num_items, 3] = self.cache_status[k, i]
-                self.states[i + k * self.num_items, 4] = self.old_cache[k, i]
-                self.states[i + k * self.num_items, 5] = self.popularity[i]
-                self.states[i + k * self.num_items, 6] = (
-                    1  # 1 for edge, 1 init for vehicle
-                )
+    def compute_states(self):
+        # for each edge, states include:
+        # requests - shape: num_items
+        # old_cache_status - shape: num_items
+        # item_sizes - shape: num_items
+        # item_delivery_deadline - shape: num_items
+        self.states = np.zeros((self.num_edges, self.num_items * 4))
+        for edge in range(self.num_edges):
+            self.states[edge, : self.num_items] = self.requests_edges[edge]
+            self.states[edge, self.num_items : 2 * self.num_items] = self.old_cache[
+                edge, :
+            ]
+            self.states[edge, 2 * self.num_items : 3 * self.num_items] = self.item_size
+            self.states[edge, 3 * self.num_items :] = self.delivery_deadline
 
-    def update_num_vehicle(self, num_vehicle):
-        self.num_vehicles = num_vehicle
-        self.states[self.num_edges * self.num_items :, 6] = (
-            num_vehicle  # num_vehicles as cost multiplier for vehicle
-        )
+        self.masks = np.zeros((self.num_edges * self.num_items * 2))
 
-    def compute_masks(self):
-        # for each edge, mask already cached items
-        self.masks = self.cache_status.copy()
+    def greedy_projection(self, actions):
+        # actions: binary selected mask of shape (num_edges x num_items)
+        # greedy select item with high popularity until capacity is exceeded
+        actions = actions.view(self.num_edges, self.num_items)
+        valid_actions = torch.zeros_like(actions)
+        for edge in range(self.num_edges):
+            edge_capacity = self.edge_capacity
+            for item in np.argsort(-self.popularities[edge]):
+                if actions[edge, item] == 1 and edge_capacity >= self.item_size[item]:
+                    valid_actions[edge, item] = 1
+                    edge_capacity -= self.item_size[item]
 
-        # Step 1: Mask items exceeding local capacity
-        for idx in range(self.total_locations):
-            # Step 1: Mask items exceeding local capacity
-            self.masks[idx, :] = np.where(
-                self.item_sizes > self.remaining_capacity[idx],
-                1,
-                self.masks[idx, :],
-            )
+        return valid_actions.reshape(-1)
 
-        # Step 2: Mask neighboring duplication for edge servers only
-        for edge_index in range(self.num_edges):  # exclude vehicle
-            if edge_index > 0:
-                self.masks[edge_index, :] = np.where(
-                    self.cache_status[edge_index - 1, :] == 1,
-                    1,
-                    self.masks[edge_index, :],
-                )
-            if edge_index < self.num_edges - 1:
-                self.masks[edge_index, :] = np.where(
-                    self.cache_status[edge_index + 1, :] == 1,
-                    1,
-                    self.masks[edge_index, :],
-                )
+    def step(self, actions):
+        if actions.device != torch.device("cpu"):
+            actions = actions.cpu()
 
-    def step(self, action):
-        loc_index = action // self.num_items
-        item_index = action % self.num_items
+        # new_item for each edge
+        new_item = actions * (1 - self.old_cache)
 
-        self.cache_status[loc_index, item_index] = 1
-        if self.old_cache[loc_index, item_index] != 1:
-            if loc_index < self.num_edges:
-                reward = -self.edge_cost * self.item_sizes[item_index]
-            else:
-                reward = (
-                    -self.vehicle_cost * self.item_sizes[item_index] * self.num_vehicles
-                )
-        else:
-            reward = 0
+        # new item count for all edges
+        new_item_count = new_item.sum(axis=0)
 
-        reward *= self.scale
+        # get the total cost
+        reward = (new_item_count * self.edge_cost * self.item_size).sum().item()
 
-        self.remaining_capacity[loc_index] -= self.item_sizes[item_index]
-
-        self.compute_states()
-        self.compute_masks()
-
-        return reward, loc_index
-
-    def is_done(self):
-        return np.all(
-            self.masks == 1
-        )  # all items are masked (cached or exceed capacity)
+        return reward

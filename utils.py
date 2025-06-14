@@ -5,59 +5,58 @@ import numpy as np
 from environ import CacheEnv, Environment
 
 
-def log_episode(writer, env, episode, accumulated_rewards, cummulated_cache_cost):
+def log_episode(writer, env, episode, cumulated_rewards, cumulated_cache_cost, stage):
 
-    mean_reward = np.mean(accumulated_rewards)
+    sum_rewards = np.sum(cumulated_rewards)
     delay_per_segment = np.mean(env.delay / env.num_code_min[env.requested]) * 1000
     cost_per_bit = np.mean(env.cost / env.item_size[env.requested])
-    episode_length = len(accumulated_rewards)
-    ultility = np.array(env.ultility).mean(axis=0)
-    v2n_u = ultility[0]
-    v2v_u = ultility[1]
-    v2i_wifi_u = ultility[2]
-    v2i_pc5_u = ultility[3]
-    hit_rate = np.array(env.hit_ratio).mean(axis=0)
-    hit_rate_v2i = hit_rate[1]
-    cache_cost = -np.sum(cummulated_cache_cost)
+    episode_length = len(cumulated_rewards)
+    utility = np.array(env.utility).mean(axis=0)
+    v2n_u = utility[0]
+    v2v_u = utility[1]
+    v2i_wifi_u = utility[2]
+    v2i_pc5_u = utility[3]
+    hit_rate = np.array(env.hit_ratio[-1])
+    cache_cost = -np.sum(cumulated_cache_cost)
     mean_deadline_violation = np.clip(
         np.mean(env.delay - env.delivery_deadline[env.requested]), 0, None
     )
 
     writer.add_scalar(
-        f"log/mean_reward",
-        mean_reward,
+        f"log_{stage}/cumulated_reward",
+        sum_rewards,
         episode,
     )
 
     writer.add_scalar(
-        f"log/delay_per_segment",
+        f"log_{stage}/delay_per_segment",
         delay_per_segment,
         episode,
     )
 
     writer.add_scalar(
-        f"log/cost_per_bit",
+        f"log_{stage}/cost_per_bit",
         cost_per_bit,
         episode,
     )
 
     writer.add_scalar(
-        f"log/v2n_u",
+        f"log_{stage}/v2n_u",
         v2n_u,
         episode,
     )
     writer.add_scalar(
-        f"log/v2v_u",
+        f"log_{stage}/v2v_u",
         v2v_u,
         episode,
     )
     writer.add_scalar(
-        f"log/v2i_wifi_u",
+        f"log_{stage}/v2i_wifi_u",
         v2i_wifi_u,
         episode,
     )
     writer.add_scalar(
-        f"log/v2i_pc5_u",
+        f"log_{stage}/v2i_pc5_u",
         v2i_pc5_u,
         episode,
     )
@@ -65,38 +64,38 @@ def log_episode(writer, env, episode, accumulated_rewards, cummulated_cache_cost
     hit_rate = np.array(env.hit_ratio).mean(axis=0)
 
     writer.add_scalar(
-        f"log/hit_rate_v2i",
-        hit_rate_v2i,
+        f"log_{stage}/hit_rate_v2i",
+        hit_rate,
         episode,
     )
 
     writer.add_scalar(
-        f"log/cache_cost",
+        f"log_{stage}/cache_cost",
         cache_cost,
         episode,
     )
 
     writer.add_scalar(
-        f"log/episode_length",
+        f"log_{stage}/episode_length",
         episode_length,
         episode,
     )
 
     writer.add_scalar(
-        f"log/mean_deadline_violation",
+        f"log_{stage}/mean_deadline_violation",
         mean_deadline_violation,
         episode,
     )
 
     return {
-        "mean_reward": mean_reward,
+        "cummulative": sum_rewards,
         "delay_per_segment": delay_per_segment,
         "cost_per_bit": cost_per_bit,
         "v2n_u": v2n_u,
         "v2v_u": v2v_u,
         "v2i_wifi_u": v2i_wifi_u,
         "v2i_pc5_u": v2i_pc5_u,
-        "hit_rate_v2i": hit_rate_v2i,
+        "hit_rate_v2i": hit_rate,
         "cache_cost": cache_cost,
         "mean_deadline_violation": mean_deadline_violation,
         "episode": episode,

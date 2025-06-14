@@ -4,8 +4,19 @@ import torch.nn as nn
 
 
 class TransformerActor(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int = 128):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 128,
+        num_actions: int = 400,
+        action_dim: int = 2,
+    ):
         super(TransformerActor, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_actions = num_actions
+        self.action_dim = action_dim
+
         self.embedding = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -18,15 +29,23 @@ class TransformerActor(nn.Module):
         self.policy_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(
+                hidden_dim,
+                num_actions
+                * action_dim,  # Output shape: [batch_size, num_actions * action_dim]
+            ),
         )
 
     def forward(self, x, logits_mask=None):
         x1 = self.embedding(x)
-        x2 = self.transformer(x1)
-        x3 = self.policy_head(x2).squeeze(-1)  # [batch_size, num_actions * action_dim]
+        x2 = self.transformer(x1).mean(axis=1)
+        x3 = self.policy_head(x2)
         if logits_mask is not None:
             x3 = x3 + logits_mask * -1e10  # Apply mask to logits
+
+        x3 = x3.view(
+            -1, self.num_actions, self.action_dim
+        )  # Reshape to [batch_size, num_actions, action_dim]
         return x3
 
 
