@@ -42,7 +42,7 @@ class Environment:
         v2v_pc5_coverage: float = 100,
         # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
-        v2n_bandwidth: float = 0.25 * 1e6,
+        v2n_bandwidth: float = 1 * 1e6,
         v2v_bandwidth_max: float = 100e6,
         v2v_bandwidth: float = 1e6,
         v2i_pc5_bandwidth_max: float = 20e6,
@@ -66,7 +66,7 @@ class Environment:
         i2i_cost: float = 0.3,
         i2n_cost: float = 30,
         # Cost and Delay Scaling
-        storage_cost_scale: float = 0,
+        storage_cost_scale: float = 1e-1,
         delay_scale: float = 1e10,
         cost_scale: float = 1e2,
         delay_weight: float = 1,
@@ -403,7 +403,7 @@ class Environment:
         if isinstance(actions, torch.Tensor):
             actions = actions.cpu().numpy()
 
-        return np.sum(actions, axis=0) / (self.num_vehicles - self.old_done)
+        return np.sum(actions, axis=0) / self.num_vehicles
 
     # State Management
     def set_states(self) -> None:
@@ -934,9 +934,6 @@ class Environment:
         self.delay += new_delay
         self.collected += new_collected
 
-        hit_ratio = sum(hit_v2i) / sum(use_v2i) if sum(use_v2i) > 0 else 0
-        self.hit_ratio.append(hit_ratio)
-
         # compute cost and delay terms
         delay_term = (
             -self.delay_weight
@@ -956,7 +953,9 @@ class Environment:
 
         self.dones = self.delivery_done.astype(float).reshape(-1, 1)
         self.violations = self.compute_violation()
-        self.utility.append(self.channel_utility_rate(actions))
+        self.utility.append(actions)
+        hit_ratio = sum(hit_v2i) / sum(use_v2i) if sum(use_v2i) > 0 else -1
+        self.hit_ratio.append(hit_ratio)
 
         # update env
         self.step_velocity()

@@ -153,6 +153,9 @@ class PPO:
         # dont use gae
         advantages = rewards
 
+        # normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
         # create mini-batches
         dataset = torch.utils.data.TensorDataset(
             states,

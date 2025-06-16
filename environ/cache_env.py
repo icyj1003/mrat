@@ -20,7 +20,10 @@ class CacheEnv:
         new_main_env,
     ):
         self.requests_edges = new_main_env.requests_edges
-        self.old_cache = new_main_env.cache[: self.num_edges, :]
+        self.old_cache = np.zeros((self.total_locations, self.num_items))
+        self.old_cache[: self.num_edges, :] = new_main_env.old_cache[
+            : self.num_edges, :
+        ]
         self.popularities = new_main_env.popularities
 
         self.compute_states()
@@ -31,7 +34,8 @@ class CacheEnv:
         # old_cache_status - shape: num_items
         # item_sizes - shape: num_items
         # item_delivery_deadline - shape: num_items
-        self.states = np.zeros((self.num_edges, self.num_items * 4))
+        # cost weight - shape: 1
+        self.states = np.zeros((self.total_locations, self.num_items * 4))
         for edge in range(self.num_edges):
             self.states[edge, : self.num_items] = self.requests_edges[edge]
             self.states[edge, self.num_items : 2 * self.num_items] = self.old_cache[
@@ -40,7 +44,7 @@ class CacheEnv:
             self.states[edge, 2 * self.num_items : 3 * self.num_items] = self.item_size
             self.states[edge, 3 * self.num_items :] = self.delivery_deadline
 
-        self.masks = np.zeros((self.num_edges * self.num_items * 2))
+        self.masks = np.zeros((self.total_locations * self.num_items * 2))
 
     def greedy_projection(self, actions):
         # actions: binary selected mask of shape (num_edges x num_items)

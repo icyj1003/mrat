@@ -12,22 +12,10 @@ def parse_args():
     parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
     parser.add_argument("--num_items", type=int, default=100, help="Number of items")
     parser.add_argument(
-        "--cache_training_episodes",
-        type=int,
-        default=300,
-        help="Cache training episodes",
-    )
-    parser.add_argument(
-        "--delivery_training_episodes",
-        type=int,
-        default=300,
-        help="Delivery training episodes",
-    )
-    parser.add_argument(
-        "--joint_training_episodes",
+        "--training_episodes",
         type=int,
         default=1000,
-        help="Joint training episodes",
+        help="Training episodes",
     )
     parser.add_argument(
         "--evaluation_episodes", type=int, default=100, help="Evaluation episodes"
@@ -42,16 +30,16 @@ def parse_args():
         help="Steps per batch for the delivery",
     )
     parser.add_argument(
-        "--small_train_per_n_eps",
+        "--small_train_per_n_steps",
         type=int,
-        default=4,
+        default=512,
         help="Steps per batch for the delivery",
     )
     parser.add_argument(
-        "--hidden_dim", type=int, default=128, help="Hidden dimension size"
+        "--hidden_dim", type=int, default=64, help="Hidden dimension size"
     )
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
-    parser.add_argument("--num_epoch", type=int, default=7, help="Number of epochs")
+    parser.add_argument("--num_epoch", type=int, default=10, help="Number of epochs")
     parser.add_argument(
         "--clip_range",
         type=float,
