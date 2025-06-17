@@ -26,8 +26,8 @@ def log_and_collect(
     )
     v2n_u = utility[0]
     v2v_u = utility[1]
-    v2i_wifi_u = utility[2]
-    v2i_pc5_u = utility[3]
+    v2i_pc5_u = utility[2]
+    v2i_wifi_u = utility[3]
 
     # cache replacement cost
     cache_cost = -np.sum(cumulated_cache_cost)

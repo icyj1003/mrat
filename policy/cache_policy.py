@@ -20,28 +20,6 @@ class CachePolicy:
         pass
 
 
-class RandomCachePolicy(CachePolicy):
-    def __init__(self, num_edges, num_items):
-        super().__init__()
-        self.num_edges = num_edges
-        self.num_items = num_items
-
-    def act(self, states, masks, projection=None):
-        super().act()
-        logits = torch.rand((self.num_edges + 1) * self.num_items) + masks * -1e10
-        distribution = torch.distributions.Categorical(logits=logits)
-        actions = distribution.sample()
-        # If projection is provided, apply it to the actions
-        if projection is not None:
-            valid_actions = projection(actions)
-        else:
-            valid_actions = actions
-        # Calculate log probabilities of the actions
-        log_probs = distribution.log_prob(valid_actions)
-
-        return valid_actions, log_probs
-
-
 class PPOCachePolicy(CachePolicy):
     def __init__(self, args, writer=None):
         super().__init__()

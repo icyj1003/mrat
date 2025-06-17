@@ -7,21 +7,21 @@ def parse_args():
         "--name", type=str, default="default", help="Name of the run for logging"
     )
     parser.add_argument(
-        "--num_vehicles", type=int, default=40, help="Number of vehicles"
+        "--num_vehicles", type=int, default=30, help="Number of vehicles"
     )
     parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
-    parser.add_argument("--num_items", type=int, default=100, help="Number of items")
+    parser.add_argument("--num_items", type=int, default=500, help="Number of items")
     parser.add_argument(
         "--training_episodes",
         type=int,
-        default=1000,
+        default=3000,
         help="Training episodes",
     )
     parser.add_argument(
         "--evaluation_episodes", type=int, default=100, help="Evaluation episodes"
     )
     parser.add_argument(
-        "--mini_batch_size", type=int, default=64, help="Mini batch size"
+        "--mini_batch_size", type=int, default=128, help="Mini batch size"
     )
     parser.add_argument(
         "--large_train_per_n_eps",
@@ -83,7 +83,7 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--dt", type=int, default=1, help="Time step size")
-    parser.add_argument("--cost_weight", type=float, default=0, help="Cost weight")
-    parser.add_argument("--delay_weight", type=float, default=1, help="Delay weight")
+    parser.add_argument("--cost_weight", type=float, default=0.5, help="Cost weight")
+    parser.add_argument("--delay_weight", type=float, default=0.5, help="Delay weight")
 
     return parser.parse_args()

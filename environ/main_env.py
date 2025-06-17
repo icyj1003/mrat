@@ -66,7 +66,7 @@ class Environment:
         i2i_cost: float = 0.3,
         i2n_cost: float = 30,
         # Cost and Delay Scaling
-        storage_cost_scale: float = 1e-1,
+        storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
         cost_scale: float = 1e2,
         delay_weight: float = 1,
@@ -213,10 +213,28 @@ class Environment:
         self.cache[np.array(cache_vehicles) + self.num_edges, :] = 1
         self.set_states()
 
-    def large_step(self, actions):
+    def large_step(self, actions, caching_vehicles_indices) -> None:
+        # Update the cache with the provided actions
         self.cache[: self.num_edges, :] = actions.cpu()
 
+        # Update the cache vehicles according to the corresponding edge indices
+        self.update_vehicle_cache(caching_vehicles_indices)
+
         self.set_states()
+
+    def update_vehicle_cache(self, caching_vehicles_indices):
+        for vehicle_index in caching_vehicles_indices:
+            edge_idx = self.local_of[vehicle_index]
+            temp_capacity = self.vehicle_capacity * 1024 * 1024 * 8  # Convert to bits
+            for item_idx in np.argsort(self.popularities[edge_idx])[::-1]:
+                if (
+                    self.cache[edge_idx, item_idx] == 1
+                    and temp_capacity >= self.item_size[item_idx]
+                ):
+                    temp_capacity -= self.item_size[item_idx]
+                    self.cache[vehicle_index + self.num_edges, item_idx] = 1
+                if temp_capacity <= 0:
+                    break
 
     def reset_request(self) -> None:
         """
@@ -672,15 +690,14 @@ class Environment:
             if self.delivery_done[vehicle_index] == 1:
                 continue
 
+            new_delay[vehicle_index] = self.dt
+
             # if requested item is inside the vehicle cache, skip the download
             if self.cache[self.num_edges + vehicle_index, requested_item] == 1:
-                new_delay[vehicle_index] = 0
                 new_collected[vehicle_index] += self.num_code_min[requested_item] + 1
                 new_cost[vehicle_index] = 0
                 self.delivery_done[vehicle_index] = 1
                 continue
-
-            new_delay[vehicle_index] = self.dt
 
             # download with v2n
             if actions[vehicle_index, 0] == 1:

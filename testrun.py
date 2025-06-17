@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
         # At Large time-scale:
         # Step 1: Run the vehicle selection policy here
-        cache_vehicle = GTVS(env)
+        caching_vehicle = GTVS(env)
 
         # Step 2: Make caching decisions
         # Get the states and masks from the environment
@@ -58,6 +58,8 @@ if __name__ == "__main__":
             projection=cache_env.greedy_projection,  # Greedy projection for cache selection
         )
 
+        # cache_actions, cache_log_probs = cache_env.random_policy()
+
         # Reshape the actions to match the environment
         reshaped_actions = cache_actions.view(cache_env.num_edges, cache_env.num_items)
 
@@ -68,7 +70,7 @@ if __name__ == "__main__":
         cumulated_cache_costs.append(reward)
 
         # Overwrite the cache states in the environment before performing the small step
-        env.large_step(reshaped_actions)
+        env.large_step(reshaped_actions, caching_vehicle)
 
         # Small time-scale:
         # Run the multi-agent delivery policy here
@@ -115,9 +117,16 @@ if __name__ == "__main__":
             if episode > 0 and delivery_model.steps % args.small_train_per_n_steps == 0:
                 delivery_model.train()
 
+        hit_rate = np.array(env.hit_ratio)
+        hit_rate = np.mean(hit_rate[hit_rate != -1], axis=0)
+
         # Compute the main objective reward
         reward_tensor = torch.tensor(
-            [-reward * env.storage_cost_scale + np.sum(cumulated_rewards)],
+            [
+                -reward * env.storage_cost_scale
+                + np.sum(cumulated_rewards)
+                + hit_rate * 1000
+            ],
             dtype=torch.float32,
         )
 
@@ -156,11 +165,9 @@ if __name__ == "__main__":
             )
 
             # Train the cache model
-            if (
-                episode % args.large_train_per_n_eps == 0
-                and len(cache_model.agent.buffer) > 1
-            ):
+            if episode % args.large_train_per_n_eps == 0 and episode > 0:
                 cache_model.train()
+                pass
 
         # If in the evaluation phase, collect the metrics
         if episode >= args.training_episodes:
