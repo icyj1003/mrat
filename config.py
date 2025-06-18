@@ -10,11 +10,11 @@ def parse_args():
         "--num_vehicles", type=int, default=30, help="Number of vehicles"
     )
     parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
-    parser.add_argument("--num_items", type=int, default=500, help="Number of items")
+    parser.add_argument("--num_items", type=int, default=200, help="Number of items")
     parser.add_argument(
         "--training_episodes",
         type=int,
-        default=3000,
+        default=5000,
         help="Training episodes",
     )
     parser.add_argument(

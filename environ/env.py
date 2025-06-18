@@ -187,44 +187,29 @@ class Environment:
         Reset the environment, including content library and mobility model.
         """
         self.steps = 0
-        self.utility = []
-        self.hit_ratio = []
+        self.utility_track = []
+        self.hit_ratio_track = []
+        self.rewards_track = []
         self.reset_mobility()
         self.reset_request()
         self.set_states()
 
-    def random_large_step(self, cache_vehicles) -> None:
-        """
-        Perform a large step with random actions for all edges and vehicles.
-        """
-        self.cache[: self.num_edges, :] = self.np_random.randint(
-            0, 2, size=(self.num_edges, self.num_items)
-        )
-        self.cache[np.array(cache_vehicles) + self.num_edges, :] = (
-            self.np_random.randint(0, 2, size=(len(cache_vehicles), self.num_items))
-        )
-        self.set_states()
-
-    def all_large_step(self, cache_vehicles) -> None:
-        """
-        Perform a large step with all actions set to 1 for all edges and vehicles.
-        """
-        self.cache[: self.num_edges, :] = 1
-        self.cache[np.array(cache_vehicles) + self.num_edges, :] = 1
-        self.set_states()
-
     def large_step(self, actions, caching_vehicles_indices) -> None:
         # Update the cache with the provided actions
-        self.cache[: self.num_edges, :] = actions.cpu()
+        self.cache[: self.num_edges, :] = actions
 
         # Update the cache vehicles according to the corresponding edge indices
         self.update_vehicle_cache(caching_vehicles_indices)
 
+        # Update the delivery status of vehicles
         self.set_states()
 
     def update_vehicle_cache(self, caching_vehicles_indices):
         for vehicle_index in caching_vehicles_indices:
+            # Get the edge index for the vehicle
             edge_idx = self.local_of[vehicle_index]
+
+            # Check if the vehicle is caching items from the edge
             temp_capacity = self.vehicle_capacity * 1024 * 1024 * 8  # Convert to bits
             for item_idx in np.argsort(self.popularities[edge_idx])[::-1]:
                 if (
@@ -240,21 +225,21 @@ class Environment:
         """
         Reset and assign the requests matrix for all vehicles.
         """
-        # Step 0: zero out vehicle cache
+        # zero out vehicle cache
         self.cache[self.num_edges :, :] = 0
 
-        # Step 1: Refresh the alpha values for Zipf distribution for each edge
+        # Refresh the alpha values for Zipf distribution for each edge
         for alpha in self.alphas:
             alpha.value = alpha.step()
 
-        # Step 2: Generate Popularity for each edge
+        # Generate Popularity for each edge
         self.popularities = []
         for edge in range(self.num_edges):
             popularity = np.zeros(self.num_items)
             popularity[self.ranks[edge]] = zipf(self.num_items, self.alphas[edge].value)
             self.popularities.append(popularity)
 
-        # Step 6: Generate request matrix (one request per vehicle)
+        # Generate request matrix (one request per vehicle)
         self.requests_matrix = np.zeros((self.num_vehicles, self.num_items))
         self.requests_edges = np.zeros((self.num_edges, self.num_items))
         for i in range(self.num_vehicles):
@@ -265,7 +250,7 @@ class Environment:
             self.requests_edges[self.local_of[i], requested_item] = 1
         self.requested = np.argmax(self.requests_matrix, axis=1)
 
-        # Step 7: Reset delivery status tracking
+        # Reset delivery status tracking
         self.delivery_done = np.zeros(self.num_vehicles)
         self.collected = np.zeros(self.num_vehicles)
         self.delay = np.zeros(self.num_vehicles)
@@ -284,9 +269,10 @@ class Environment:
         lane_indices = self.np_random.randint(0, self.num_lanes, size=self.num_vehicles)
         self.direction = np.where(lane_indices < self.num_lanes / 2, -1, 1)
 
-        # Generate x coordinates based on the direction of the lanes
+        # Optional: Generate x coordinates based on the direction of the lanes
         # x = np.where(lane_indices < self.num_lanes / 2, self.road_length, 0)
 
+        # Calculate y-coordinates based on lane indices and lane spacing
         y = lane_indices * self.distance_between_lanes + self.distance_between_lanes / 2
 
         # Assign positions
@@ -309,7 +295,7 @@ class Environment:
         # update the mobility status based on the initial positions
         self.update_mobility_status()
 
-    def greedy_projection(self, actions) -> None:  # num_vehicle x num_rats
+    def bandwidth_constraints_handler(self, actions) -> None:  # num_vehicle x num_rats
         # bring action to cpu
         device = actions.device
         if device.type == "cuda":
@@ -405,23 +391,32 @@ class Environment:
 
         return actions.to(device)
 
-    def compute_violation(self):
+    def compute_deadline_violation(self):
+        # Compute the deadline violation for each vehicle
         deadline_cost = np.where(
             (self.delay - self.delivery_deadline[self.requested]) > 0, 1, 0
         ).reshape(-1, 1)
+
+        # If the delivery is done, set the deadline cost to 0
         deadline_cost = deadline_cost * (1 - self.delivery_done.reshape(-1, 1))
         return deadline_cost
 
-    def channel_utility_rate(self, actions: np.ndarray) -> np.ndarray:
-        """
-        For each type of link, count the number of vehicles that are using it to see which link vehicle prefers
-        """
+    def compute_utility(
+        self,
+    ) -> np.ndarray:
+        utility = (
+            np.array(self.utility_track).sum(axis=0) / self.delay.reshape(-1, 1)
+        ).mean(axis=0)
+        v2n_u = utility[0]
+        v2v_u = utility[1]
+        v2i_pc5_u = utility[2]
+        v2i_wifi_u = utility[3]
+        return v2n_u, v2v_u, v2i_pc5_u, v2i_wifi_u
 
-        # convert to numpy array if actions is a tensor
-        if isinstance(actions, torch.Tensor):
-            actions = actions.cpu().numpy()
-
-        return np.sum(actions, axis=0) / self.num_vehicles
+    def compute_hit_ratio(self) -> np.ndarray:
+        hit_rate = np.array(self.hit_ratio_track)
+        hit_rate = np.mean(hit_rate[hit_rate != -1], axis=0)
+        return hit_rate
 
     # State Management
     def set_states(self) -> None:
@@ -465,8 +460,7 @@ class Environment:
         # if delivery is done, force disable all actions (mask 1)
         self.masks[self.delivery_done == 1, :, 1] = 1
 
-        self.connection_status = np.zeros((self.num_vehicles, 6))
-        """ 
+        """Connection Status:
         0: cache available in nearby vehicle
         1: cache available in local edge
         2: cache available in neighbor edge
@@ -474,6 +468,7 @@ class Environment:
         4: number of vehicle in local wifi coverage
         5: cache available in the vehicle
         """
+        self.connection_status = np.zeros((self.num_vehicles, 6))
 
         # cache in nearby vehicle
         self.connection_status[:, 0] = 1 - self.masks[:, 1, 1]
@@ -626,7 +621,7 @@ class Environment:
         # Set diagonal to zero (distance to self)
         np.fill_diagonal(self.vehicle_distance, 0.0)
 
-    def step_velocity(self, sigma: float = 0.5) -> None:
+    def update_velocity(self, sigma: float = 0.5) -> None:
         """
         Update the velocities of vehicles using a truncated Gaussian distribution.
         Args:
@@ -651,7 +646,7 @@ class Environment:
         """
         return np.all(self.delivery_done == 1)
 
-    def step_position(self) -> None:
+    def update_position(self) -> None:
         """
         Update the positions of vehicles based on their velocities and direction.
         """
@@ -966,23 +961,30 @@ class Environment:
         )  # cost per bit
 
         # compute the reward, dones, and violations
-        self.rewards = (cost_term + delay_term).reshape(-1, 1)
+        rewards = (cost_term + delay_term).reshape(-1, 1)
+        dones = self.delivery_done.astype(float).reshape(-1, 1)
+        violations = self.compute_deadline_violation()
 
-        self.dones = self.delivery_done.astype(float).reshape(-1, 1)
-        self.violations = self.compute_violation()
-        self.utility.append(actions)
-        hit_ratio = sum(hit_v2i) / sum(use_v2i) if sum(use_v2i) > 0 else -1
-        self.hit_ratio.append(hit_ratio)
+        # Track the utility
+        self.utility_track.append(actions)
+
+        # Track the hit ratio
+        self.hit_ratio_track.append(
+            sum(hit_v2i) / sum(use_v2i) if sum(use_v2i) > 0 else -1
+        )
+
+        # Track the rewards
+        self.rewards_track.append(rewards.mean())
 
         # update env
-        self.step_velocity()
-        self.step_position()
+        self.update_velocity()
+        self.update_position()
         self.set_states()
 
         # return the next states, rewards, dones, and violations
         return (
             self.states,
-            self.rewards,
-            self.dones,
-            self.violations,
+            rewards,
+            dones,
+            violations,
         )

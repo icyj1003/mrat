@@ -1,36 +1,29 @@
 from collections import Counter
+import datetime
 
 import numpy as np
 
-from environ import CacheEnv, Environment
+from environ import Environment
+from torch.utils.tensorboard import SummaryWriter
 
 
-def log_and_collect(
-    writer, env, episode, cumulated_rewards, cumulated_cache_cost, objective
-):
-    # objective
-    sum_rewards = np.sum(cumulated_rewards)
+def log_and_collect(writer, env, episode):
+    # cumulative_reward
+    cumulative_reward = np.sum(env.rewards_track)
 
     # delay per segment
-    delay_per_segment = np.mean(env.delay / env.num_code_min[env.requested]) * 1000
+    delay_per_segment = (
+        np.mean(env.delay / env.num_code_min[env.requested]) * 1000
+    )  # to ms
 
     # cost per bit
     cost_per_bit = np.mean(env.cost / env.item_size[env.requested])
 
     # episode length
-    episode_length = len(cumulated_rewards)
+    episode_length = len(env.rewards_track)
 
     # utility
-    utility = (np.array(env.utility).sum(axis=0) / env.delay.reshape(-1, 1)).mean(
-        axis=0
-    )
-    v2n_u = utility[0]
-    v2v_u = utility[1]
-    v2i_pc5_u = utility[2]
-    v2i_wifi_u = utility[3]
-
-    # cache replacement cost
-    cache_cost = -np.sum(cumulated_cache_cost)
+    v2n_u, v2v_u, v2i_pc5_u, v2i_wifi_u = env.compute_utility()
 
     # deadline violation
     mean_deadline_violation = np.clip(
@@ -38,12 +31,11 @@ def log_and_collect(
     )
 
     # v2v hit-ratio
-    hit_rate = np.array(env.hit_ratio)
-    hit_rate = np.mean(hit_rate[hit_rate != -1], axis=0)
+    hit_rate = env.compute_hit_ratio()
 
     writer.add_scalar(
-        f"log/cumulated_reward",
-        sum_rewards,
+        f"log/cumulative_reward",
+        cumulative_reward,
         episode,
     )
 
@@ -87,12 +79,6 @@ def log_and_collect(
     )
 
     writer.add_scalar(
-        f"log/cache_cost",
-        cache_cost,
-        episode,
-    )
-
-    writer.add_scalar(
         f"log/episode_length",
         episode_length,
         episode,
@@ -103,30 +89,24 @@ def log_and_collect(
         mean_deadline_violation,
         episode,
     )
-    writer.add_scalar(
-        f"log/objective",
-        objective.item(),
-        episode,
-    )
 
     return {
-        "cumulative": sum_rewards,
+        "cumulative_reward": cumulative_reward,
         "episode_length": episode_length,
-        "objective": objective.item(),
         "delay_per_segment": delay_per_segment,
         "cost_per_bit": cost_per_bit,
         "v2n_u": v2n_u,
         "v2v_u": v2v_u,
         "v2i_wifi_u": v2i_wifi_u,
         "v2i_pc5_u": v2i_pc5_u,
-        "hit_rate_v2i": hit_rate,
-        "cache_replacement_cost": cache_cost,
+        "v2i_hit_rate": hit_rate,
         "mean_deadline_violation": mean_deadline_violation,
         "episode": episode,
     }
 
 
 def get_environment(args):
+    # Create the environment
     env = Environment(
         num_vehicles=args.num_vehicles,
         num_edges=args.num_edges,
@@ -141,16 +121,10 @@ def get_environment(args):
         delay_weight=args.delay_weight,
     )
 
+    # Reset the environment
     env.reset()
 
-    cache_env = CacheEnv(
-        main_env=env,
-    )
-
-    cache_env.reset(
-        new_main_env=env,
-    )
-    return env, cache_env
+    return env
 
 
 def aggregate_metrics(data):
@@ -158,3 +132,9 @@ def aggregate_metrics(data):
     for k, v in out.items():
         out[k] = float(v)
     return out
+
+
+def get_logger(args):
+    current = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    writer = SummaryWriter(log_dir=f"runs/{current}_{args.name}")
+    return current, writer

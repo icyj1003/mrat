@@ -1,84 +1,45 @@
-import torch
-
-from agent.ppo import PPO
+import numpy as np
 
 
-class CachePolicy:
-    def __init__(self, *args, **kwargs):
-        self.steps = 0
+def heuristic_cache_placement(env):
+    """
+    Generate a [num_edges x num_items] binary cache placement matrix
+    using a greedy value-based knapsack approach, with edge-specific popularity.
 
-    def act(self, *args, **kwargs):
-        self.steps += 1
+    Args:
+        env: Environment object with:
+            - env.item_size: [num_items]
+            - env.popularities: [num_edges, num_items]
+            - env.deadline: [num_items]
+            - env.edge_capacity: scalar or [num_edges]
+            - env.num_edges: int
+            - env.num_items: int
 
-    def store_transition(self, *args, **kwargs):
-        pass
+    Returns:
+        cache_matrix: np.ndarray of shape [num_edges, num_items]
+                      Binary matrix indicating caching decisions
+    """
+    num_edges = env.num_edges
+    num_items = env.num_items
+    sizes = env.item_size / 1024 / 1024 / 8
+    deadlines = env.delivery_deadline
 
-    def train(self, *args, **kwargs):
-        pass
+    cache_matrix = np.zeros((num_edges, num_items), dtype=int)
 
-    def merge_rewards(self, *args, **kwargs):
-        pass
+    for edge in range(num_edges):
+        pop = env.popularities[edge]  # [num_items]
+        utility = pop / (sizes * deadlines)  # element-wise utility for edge
+        sorted_indices = np.argsort(-utility)  # descending sort
 
-
-class PPOCachePolicy(CachePolicy):
-    def __init__(self, args, writer=None):
-        super().__init__()
-        self.args = args
-        self.agent = PPO(
-            name="ppo_cache",
-            num_actions=args.num_edges * args.num_items,
-            action_dim=2,
-            state_dim=4 * args.num_items,
-            hidden_dim=512,
-            lr=args.lr,
-            num_epochs=args.num_epoch,
-            clip_range=args.clip_range,
-            gamma=1,
-            gae_lambda=1,
-            tau=args.tau,
-            entropy_coeff=args.entropy_coeff,
-            penalty_coeff=args.penalty_coeff,
-            mini_batch_size=1,
-            max_grad_norm=args.max_grad_norm,
-            device="cuda",
-            writer=writer,
-            use_lagrange=False,
+        remaining_capacity = (
+            env.edge_capacity
+            if np.isscalar(env.edge_capacity)
+            else env.edge_capacity[edge]
         )
 
-    def act(self, states, masks, projection=None):
-        super().act()
-        actions, log_probs = self.agent.act(states, masks, projection=projection)
-        return actions, log_probs
+        for idx in sorted_indices:
+            if sizes[idx] <= remaining_capacity:
+                cache_matrix[edge, idx] = 1
+                remaining_capacity -= sizes[idx]
 
-    def store_transition(
-        self,
-        state,
-        mask,
-        action,
-        log_prob,
-        reward,
-        next_state,
-        done,
-        violations,
-    ):
-        super().store_transition()
-        self.agent.buffer.add(
-            state,
-            mask,
-            action,
-            log_prob,
-            reward,
-            next_state,
-            done,
-            violations,
-        )
-
-    def train(self):
-        super().train()
-        self.agent.update()
-
-    def merge_rewards(self, mean_delivery_rewards):
-        super().merge_rewards()
-        self.agent.buffer.rewards[-1] = torch.tensor(
-            [mean_delivery_rewards], dtype=torch.float32
-        )
+    return cache_matrix

@@ -24,7 +24,7 @@ class RandomDeliveryPolicy(DeliveryPolicy):
         self.num_actions = num_actions
         self.action_dim = action_dim
 
-    def act(self, masks, projection=None):
+    def act(self, states, masks, projection=None):
         super().act()
         logits = (
             torch.rand(self.num_agents, self.num_actions, self.action_dim)
