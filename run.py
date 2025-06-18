@@ -93,12 +93,17 @@ if __name__ == "__main__":
                 episode,
             )
         )
+        infos[-1]["num_caching_vehicles"] = len(caching_vehicle)
 
         # Reset the environment
         env.reset()
 
     # Aggregate the evaluation metrics
     evaluate = aggregate_metrics(infos[-args.evaluation_episodes :])
+    evaluate["num_vehicles"] = args.num_vehicles
+    evaluate["num_edges"] = args.num_edges
+    evaluate["num_items"] = args.num_items
+    evaluate["name"] = args.name
 
     # Save the model and metrics
     torch.save(

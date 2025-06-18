@@ -128,9 +128,10 @@ def get_environment(args):
 
 
 def aggregate_metrics(data):
+    len_data = len(data)
     out = dict(sum((Counter(d) for d in data), Counter()))
     for k, v in out.items():
-        out[k] = float(v)
+        out[k] = float(v) / len_data
     return out
 
 
