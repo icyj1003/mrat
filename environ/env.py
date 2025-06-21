@@ -71,6 +71,8 @@ class Environment:
         cost_scale: float = 1e2,
         delay_weight: float = 1,
         cost_weight: float = 0,
+        disable_v2v: bool = False,
+        disable_wifi: bool = False,
     ):
         # Set core meta-parameters
         self.dt = dt
@@ -180,6 +182,10 @@ class Environment:
         self.cache = np.zeros(
             (self.num_edges + self.num_vehicles, self.num_items), dtype=int
         )
+
+        # Disable V2V and WiFi if specified
+        self.disable_v2v = disable_v2v
+        self.disable_wifi = disable_wifi
 
     # Initialization Methods
     def reset(self) -> None:
@@ -574,6 +580,14 @@ class Environment:
         )
 
         self.state_dim = self.states.shape[1]
+
+        # if disable v2v
+        if self.disable_v2v:
+            self.masks[:, 1, 1] = 1
+
+        # if disable wifi
+        if self.disable_wifi:
+            self.masks[:, 3, 1] = 1
 
     # Mobility Updates
     def update_mobility_status(self) -> None:

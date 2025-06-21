@@ -85,5 +85,11 @@ def parse_args():
     parser.add_argument("--dt", type=int, default=1, help="Time step size")
     parser.add_argument("--cost_weight", type=float, default=0.5, help="Cost weight")
     parser.add_argument("--delay_weight", type=float, default=0.5, help="Delay weight")
+    parser.add_argument(
+        "--remove_v2v", action="store_true", help="Remove V2V communication"
+    )
+    parser.add_argument(
+        "--remove_wifi", action="store_true", help="Remove WiFi communication"
+    )
 
     return parser.parse_args()
