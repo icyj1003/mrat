@@ -119,6 +119,8 @@ def get_environment(args):
         dt=args.dt,
         cost_weight=args.cost_weight,
         delay_weight=args.delay_weight,
+        disable_v2v=args.remove_v2v,
+        disable_wifi=args.remove_wifi,
     )
 
     # Reset the environment
