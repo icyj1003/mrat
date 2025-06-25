@@ -10,7 +10,7 @@ def parse_args():
         "--num_vehicles", type=int, default=30, help="Number of vehicles"
     )
     parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
-    parser.add_argument("--num_items", type=int, default=200, help="Number of items")
+    parser.add_argument("--num_items", type=int, default=500, help="Number of items")
     parser.add_argument(
         "--training_episodes",
         type=int,
@@ -18,7 +18,7 @@ def parse_args():
         help="Training episodes",
     )
     parser.add_argument(
-        "--evaluation_episodes", type=int, default=1000, help="Evaluation episodes"
+        "--evaluation_episodes", type=int, default=100, help="Evaluation episodes"
     )
     parser.add_argument(
         "--mini_batch_size", type=int, default=128, help="Mini batch size"
@@ -91,5 +91,45 @@ def parse_args():
     parser.add_argument(
         "--remove_wifi", action="store_true", help="Remove WiFi communication"
     )
-
+    parser.add_argument(
+        "--remove_pc5", action="store_true", help="Remove PC5 communication"
+    )
+    parser.add_argument(
+        "--cache_policy",
+        type=str,
+        default="heuristic",
+        choices=[
+            "greedy",
+            "random",
+            "none",
+            "heuristic",
+            "heuristic_no_deadline",
+            "heuristic_no_popularity",
+            "heuristic_no_size",
+            "heuristic_no_deadline_popularity",
+            "heuristic_no_deadline_size",
+            "heuristic_no_popularity_size",
+        ],
+    )
+    parser.add_argument(
+        "--delivery_policy",
+        type=str,
+        default="mappo",
+        choices=["greedy", "random", "all", "mappo", "selective"],
+    )
+    parser.add_argument(
+        "--vehicle_selection_policy",
+        type=str,
+        default="gtvs_min2",
+        choices=["gtvs_min1", "gtvs_min2", "gtvs_min3", "random", "none"],
+        help="Policy for selecting vehicles",
+    )
+    parser.add_argument(
+        "--remove_edge_cooperation",
+        action="store_true",
+        help="Remove edge cooperation for caching decisions",
+    )
     return parser.parse_args()
+
+
+# python run.py --cache_policy random --delivery_policy random --vehicle_selection_policy gtvs --training_episodes 1 --evaluation_episodes 10

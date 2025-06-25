@@ -50,7 +50,7 @@ class Environment:
         v2i_wifi_bandwidth_max: float = 80e6,
         v2i_wifi_bandwidth: float = 5e6,
         # Transmission Cost
-        v2n_cost: float = 8,
+        v2n_cost: float = 10,
         v2i_pc5_cost: float = 1,
         v2i_wifi_cost: float = 0.8,
         v2v_cost: float = 0.8,
@@ -68,11 +68,13 @@ class Environment:
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
-        cost_scale: float = 1e2,
+        cost_scale: float = 3e1,
         delay_weight: float = 1,
         cost_weight: float = 0,
         disable_v2v: bool = False,
         disable_wifi: bool = False,
+        disable_pc5: bool = False,
+        remove_edge_cooperation: bool = False,
     ):
         # Set core meta-parameters
         self.dt = dt
@@ -122,7 +124,7 @@ class Environment:
         # Content Popularity
         self.alphas = [
             MarkovTransitionModel(
-                states=[0.8, 0.9, 0.1, 0.2], random_state=self.np_random
+                states=[0.8, 0.9, 1.0, 1.2], random_state=self.np_random
             )
             for _ in range(self.num_edges)
         ]
@@ -186,6 +188,10 @@ class Environment:
         # Disable V2V and WiFi if specified
         self.disable_v2v = disable_v2v
         self.disable_wifi = disable_wifi
+        self.disable_pc5 = disable_pc5
+
+        # Edge cooperation flag
+        self.remove_edge_cooperation = remove_edge_cooperation
 
     # Initialization Methods
     def reset(self) -> None:
@@ -589,6 +595,10 @@ class Environment:
         if self.disable_wifi:
             self.masks[:, 3, 1] = 1
 
+        # if disable pc5
+        if self.disable_pc5:
+            self.masks[:, 2, 1] = 1
+
     # Mobility Updates
     def update_mobility_status(self) -> None:
         """
@@ -704,7 +714,7 @@ class Environment:
             # if requested item is inside the vehicle cache, skip the download
             if self.cache[self.num_edges + vehicle_index, requested_item] == 1:
                 new_collected[vehicle_index] += self.num_code_min[requested_item] + 1
-                new_cost[vehicle_index] = 0
+                new_cost[vehicle_index] += 0
                 self.delivery_done[vehicle_index] = 1
                 continue
 
@@ -729,7 +739,7 @@ class Environment:
                 new_collected[vehicle_index] += v2n_transfered_segment
 
                 # accumulate the cost
-                new_cost[vehicle_index] = (
+                new_cost[vehicle_index] += (
                     self.v2n_cost * v2n_transfered_segment * self.code_size
                 )
 
@@ -780,7 +790,7 @@ class Environment:
                     new_collected[vehicle_index] += v2v_transfered_segment
 
                     # accumulate the cost
-                    new_cost[vehicle_index] = (
+                    new_cost[vehicle_index] += (
                         self.v2v_cost * v2v_transfered_segment * self.code_size
                     )
 
@@ -809,7 +819,7 @@ class Environment:
                     )
 
                     # accumulate the collected segments
-                    new_cost[vehicle_index] = (
+                    new_cost[vehicle_index] += (
                         self.v2i_pc5_cost * v2i_pc5_transfered_segment * self.code_size
                     )
                     hit_v2i[vehicle_index] = 1
@@ -827,7 +837,7 @@ class Environment:
                             )
 
                     # if there is a neighbor edge that has the requested item
-                    if hop_distance < 99:
+                    if hop_distance < 99 and not self.remove_edge_cooperation:
                         v2i_pc5_transfered_segment = np.floor(
                             self.dt
                             * self.i2i_data_rate
@@ -838,7 +848,7 @@ class Environment:
                             )
                         )
                         # accumulate the cost
-                        new_cost[vehicle_index] = (
+                        new_cost[vehicle_index] += (
                             v2i_pc5_transfered_segment
                             * self.code_size
                             * (self.i2i_cost + self.v2i_pc5_cost)
@@ -854,7 +864,7 @@ class Environment:
                             / (self.code_size * (data_rate + self.i2n_data_rate))
                         )
                         # accumulate the cost: i2n + v2i_pc5
-                        new_cost[vehicle_index] = (
+                        new_cost[vehicle_index] += (
                             v2i_pc5_transfered_segment
                             * self.code_size
                             * (self.i2n_cost + self.v2i_pc5_cost)
@@ -892,7 +902,7 @@ class Environment:
                         )
 
                         # accumulate the collected segments
-                        new_cost[vehicle_index] = (
+                        new_cost[vehicle_index] += (
                             self.v2i_wifi_cost
                             * v2i_wifi_transfered_segment
                             * self.code_size
@@ -912,7 +922,7 @@ class Environment:
                                 )
 
                         # if there is a neighbor edge that has the requested item
-                        if hop_distance < 99:
+                        if hop_distance < 99 and not self.remove_edge_cooperation:
                             v2i_wifi_transfered_segment = np.floor(
                                 self.dt
                                 * self.i2i_data_rate
@@ -923,7 +933,7 @@ class Environment:
                                 )
                             )
                             # accumulate the cost
-                            new_cost[vehicle_index] = (
+                            new_cost[vehicle_index] += (
                                 v2i_wifi_transfered_segment
                                 * self.code_size
                                 * (self.i2i_cost + self.v2i_wifi_cost)
@@ -939,7 +949,7 @@ class Environment:
                                 / (self.code_size * (data_rate + self.i2n_data_rate))
                             )
                             # accumulate the cost
-                            new_cost[vehicle_index] = (
+                            new_cost[vehicle_index] += (
                                 self.i2n_cost
                                 * v2i_wifi_transfered_segment
                                 * self.code_size

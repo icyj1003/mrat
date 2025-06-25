@@ -17,7 +17,7 @@ def log_and_collect(writer, env, episode):
     )  # to ms
 
     # cost per bit
-    cost_per_bit = np.mean(env.cost / env.item_size[env.requested])
+    cost_per_bit = np.mean(env.cost / (env.collected * env.code_size))
 
     # episode length
     episode_length = len(env.rewards_track)
@@ -121,6 +121,7 @@ def get_environment(args):
         delay_weight=args.delay_weight,
         disable_v2v=args.remove_v2v,
         disable_wifi=args.remove_wifi,
+        remove_edge_cooperation=args.remove_edge_cooperation,
     )
 
     # Reset the environment

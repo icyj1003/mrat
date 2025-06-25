@@ -74,3 +74,10 @@ def GTVS(
             covered_history.append(coverage_sets[best_vehicle])
 
     return selected_vehicles
+
+
+def no_vehicle_selection(env) -> List[int]:
+    """
+    Select no vehicles for the GTVS policy.
+    """
+    return []

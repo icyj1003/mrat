@@ -2,9 +2,17 @@ import torch
 from tqdm import tqdm
 
 from config import parse_args
-from policy.delivery_policy import MAPPODeliveryPolicy
-from policy.cache_policy import heuristic_cache_placement
-from policy.selection_policy import GTVS
+from policy.delivery_policy import (
+    MAPPODeliveryPolicy,
+    RandomDeliveryPolicy,
+    AllLinkDeliveryPolicy,
+)
+from policy.cache_policy import (
+    heuristic_cache_placement,
+    random_cache_placement,
+    no_cache_placement,
+)
+from policy.selection_policy import GTVS, no_vehicle_selection
 from utils import get_environment, log_and_collect, aggregate_metrics, get_logger
 
 
@@ -19,11 +27,22 @@ if __name__ == "__main__":
     env = get_environment(args)
 
     # Initialize delivery policies
-    delivery_model = MAPPODeliveryPolicy(
-        args,
-        env,
-        writer=writer,
-    )
+    if args.delivery_policy == "mappo":
+        delivery_model = MAPPODeliveryPolicy(
+            args,
+            env,
+            writer=writer,
+        )
+    elif args.delivery_policy == "all":
+        delivery_model = AllLinkDeliveryPolicy()
+    elif args.delivery_policy == "random":
+        delivery_model = RandomDeliveryPolicy(
+            num_agents=args.num_vehicles,
+            num_actions=env.num_rats,
+            action_dim=2,  # Assuming action_dim is 2 for the delivery policy
+        )
+    else:
+        raise ValueError(f"Unknown delivery policy: {args.delivery_policy}")
 
     # Compute the total episodes
     total_episodes = args.training_episodes + args.evaluation_episodes
@@ -35,10 +54,47 @@ if __name__ == "__main__":
     for episode in tqdm(range(total_episodes), desc="Running", unit="episode"):
         # At Large time-scale:
         # Step 1: Run the vehicle selection policy here
-        caching_vehicle = GTVS(env)
+        if args.vehicle_selection_policy == "gtvs_min1":
+            caching_vehicle = GTVS(env, min_vehicles=1)
+        elif args.vehicle_selection_policy == "gtvs_min2":
+            caching_vehicle = GTVS(env, min_vehicles=2)
+        elif args.vehicle_selection_policy == "gtvs_min3":
+            caching_vehicle = GTVS(env, min_vehicles=3)
+        else:
+            caching_vehicle = no_vehicle_selection(env)
 
         # Step 2: Make caching decisions
-        cache_actions = heuristic_cache_placement(env)
+        # initialize caching policy
+        if args.cache_policy == "heuristic":
+            cache_actions = heuristic_cache_placement(env)
+        elif args.cache_policy == "heuristic_no_deadline":
+            cache_actions = heuristic_cache_placement(
+                env, use_deadline=False, use_popularity=True, use_size=True
+            )
+        elif args.cache_policy == "heuristic_no_popularity":
+            cache_actions = heuristic_cache_placement(
+                env, use_deadline=True, use_popularity=False, use_size=True
+            )
+        elif args.cache_policy == "heuristic_no_size":
+            cache_actions = heuristic_cache_placement(
+                env, use_deadline=True, use_popularity=True, use_size=False
+            )
+        elif args.cache_policy == "heuristic_no_deadline_popularity":
+            cache_actions = heuristic_cache_placement(
+                env, use_deadline=False, use_popularity=False, use_size=True
+            )
+        elif args.cache_policy == "heuristic_no_deadline_size":
+            cache_actions = heuristic_cache_placement(
+                env, use_deadline=False, use_popularity=True, use_size=False
+            )
+        elif args.cache_policy == "heuristic_no_popularity_size":
+            cache_actions = heuristic_cache_placement(
+                env, use_deadline=True, use_popularity=False, use_size=False
+            )
+        elif args.cache_policy == "random":
+            cache_actions = random_cache_placement(env)
+        elif args.cache_policy == "none":
+            cache_actions = no_cache_placement(env)
 
         # Overwrite the cache states in the environment before performing the small step
         env.large_step(cache_actions, caching_vehicle)
@@ -109,7 +165,7 @@ if __name__ == "__main__":
     torch.save(
         {
             "args": args,
-            "delivery_model": delivery_model.agent.actor.state_dict(),
+            "delivery_model": delivery_model.model(),
             "evaluate": evaluate,
             "infos": infos,
         },
@@ -117,6 +173,13 @@ if __name__ == "__main__":
     )
 
     # Print the evaluation metrics
-    print("Evaluation Metrics:")
+    print(f"[{current}] Evaluation Metrics ===========================")
     for key, value in evaluate.items():
         print(f"{key}: {value}")
+
+    # Write evaluation metrics to ./out.txt
+    with open("./out.txt", "a") as f:
+        f.write(f"[{current}] Evaluation Metrics ===========================\n")
+        for key, value in evaluate.items():
+            f.write(f"{key}: {value}\n")
+        f.write("\n")

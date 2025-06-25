@@ -16,6 +16,9 @@ class DeliveryPolicy:
     def train(self, *args, **kwargs):
         pass
 
+    def model(self, *args, **kwargs):
+        pass
+
 
 class RandomDeliveryPolicy(DeliveryPolicy):
     def __init__(self, num_agents, num_actions, action_dim):
@@ -40,6 +43,23 @@ class RandomDeliveryPolicy(DeliveryPolicy):
 
         # Calculate log probabilities of the actions
         log_probs = distribution.log_prob(valid_actions)
+        return valid_actions, log_probs
+
+
+class AllLinkDeliveryPolicy(DeliveryPolicy):
+    def __init__(self):
+        super().__init__()
+
+    def act(self, states, masks, projection=None):
+        super().act()
+        actions = 1 - masks[:, :, 1]
+        if projection is not None:
+            valid_actions = projection(actions)
+        else:
+            valid_actions = actions
+
+        # Calculate log probabilities of the actions
+        log_probs = torch.zeros_like(valid_actions)
         return valid_actions, log_probs
 
 
@@ -98,3 +118,6 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
     def train(self, *args, **kwargs):
         self.agent.update()
         return super().train(*args, **kwargs)
+
+    def model(self):
+        return self.agent.actor.state_dict()
