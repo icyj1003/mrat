@@ -99,7 +99,6 @@ def parse_args():
         type=str,
         default="heuristic",
         choices=[
-            "greedy",
             "random",
             "none",
             "heuristic",
