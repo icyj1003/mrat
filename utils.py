@@ -121,6 +121,7 @@ def get_environment(args):
         delay_weight=args.delay_weight,
         disable_v2v=args.remove_v2v,
         disable_wifi=args.remove_wifi,
+        disable_pc5=args.remove_pc5,
         remove_edge_cooperation=args.remove_edge_cooperation,
     )
 
