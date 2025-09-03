@@ -20,6 +20,9 @@ if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
 
+    # set random seed
+    torch.manual_seed(args.seed)
+
     # Setup logger
     current, writer = get_logger(args)
 

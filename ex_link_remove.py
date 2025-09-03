@@ -9,3 +9,5 @@ import os
 for command in cmd:
     os.system(command)
     # print(command)
+
+# python run.py --remove_edge_cooperation --name no_edge_cooperation
