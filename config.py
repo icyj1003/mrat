@@ -120,7 +120,7 @@ def parse_args():
         "--vehicle_selection_policy",
         type=str,
         default="gtvs_min2",
-        choices=["gtvs_min1", "gtvs_min2", "gtvs_min3", "random", "none"],
+        choices=["gtvs_min1", "gtvs_min2", "gtvs_min3", "random", "none", "clustering"],
         help="Policy for selecting vehicles",
     )
     parser.add_argument(

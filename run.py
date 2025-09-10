@@ -12,7 +12,12 @@ from policy.cache_policy import (
     random_cache_placement,
     no_cache_placement,
 )
-from policy.selection_policy import GTVS, no_vehicle_selection
+from policy.selection_policy import (
+    GTVS,
+    no_vehicle_selection,
+    clustering_vehicle_selection,
+    random_vehicle_selection,
+)
 from utils import get_environment, log_and_collect, aggregate_metrics, get_logger
 
 
@@ -63,6 +68,10 @@ if __name__ == "__main__":
             caching_vehicle = GTVS(env, min_vehicles=2)
         elif args.vehicle_selection_policy == "gtvs_min3":
             caching_vehicle = GTVS(env, min_vehicles=3)
+        elif args.vehicle_selection_policy == "clustering":
+            caching_vehicle = clustering_vehicle_selection(env, num_clusters=6)
+        elif args.vehicle_selection_policy == "random":
+            caching_vehicle = random_vehicle_selection(env, num_vehicles=6)
         else:
             caching_vehicle = no_vehicle_selection(env)
 

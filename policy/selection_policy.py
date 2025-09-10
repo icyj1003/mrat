@@ -81,3 +81,36 @@ def no_vehicle_selection(env) -> List[int]:
     Select no vehicles for the GTVS policy.
     """
     return []
+
+
+def clustering_vehicle_selection(env, num_clusters: int = 6) -> List[int]:
+    from sklearn.cluster import KMeans
+
+    positions = env.positions.copy()
+    num_vehicles = positions.shape[0]
+
+    if num_vehicles <= num_clusters:
+        return list(range(num_vehicles))
+
+    kmeans = KMeans(n_clusters=num_clusters, random_state=env.seed)
+    kmeans.fit(positions)
+    centers = kmeans.cluster_centers_
+
+    selected_vehicles = []
+    for center in centers:
+        distances = np.linalg.norm(positions - center, axis=1)
+        closest_vehicle = int(np.argmin(distances))
+        selected_vehicles.append(closest_vehicle)
+
+    return selected_vehicles
+
+
+def random_vehicle_selection(env, num_vehicles: int = 6) -> List[int]:
+    """
+    Randomly select vehicles based on a given selection probability.
+    """
+    rng = np.random.RandomState(env.seed)
+    selected_vehicles = rng.choice(
+        env.num_vehicles, size=num_vehicles, replace=False
+    ).tolist()
+    return selected_vehicles
