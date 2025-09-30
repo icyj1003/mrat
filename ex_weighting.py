@@ -11,5 +11,5 @@ import os
 
 for pair in trade_off:
     cmd = f"python run.py --cost_weight {pair[0]} --delay_weight {pair[1]} --name weighting_{pair[0]}_{pair[1]}"
-    os.system(cmd)
-    # print(cmd)
+    # os.system(cmd)
+    print(cmd)

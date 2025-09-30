@@ -14,11 +14,11 @@ def parse_args():
     parser.add_argument(
         "--training_episodes",
         type=int,
-        default=5000,
+        default=10000,
         help="Training episodes",
     )
     parser.add_argument(
-        "--evaluation_episodes", type=int, default=100, help="Evaluation episodes"
+        "--evaluation_episodes", type=int, default=1000, help="Evaluation episodes"
     )
     parser.add_argument(
         "--mini_batch_size", type=int, default=128, help="Mini batch size"
