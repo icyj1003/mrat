@@ -17,3 +17,19 @@ def l_removal():
     ]
     for cmd in cmds:
         os.system(cmd)
+
+
+args = ArgumentParser()
+args.add_argument(
+    "--v_scaling", action="store_true", help="Run vehicle scaling experiments"
+)
+args.add_argument(
+    "--l_removal", action="store_true", help="Run link removal experiments"
+)
+opts = args.parse_args()
+
+if opts.v_scaling:
+    v_scaling()
+
+if opts.l_removal:
+    l_removal()
