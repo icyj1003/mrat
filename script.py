@@ -19,6 +19,24 @@ def l_removal():
         os.system(cmd)
 
 
+def cache_policy():
+    cache_policy = [
+        "random",
+        "none",
+        "heuristic",
+        "heuristic_no_deadline",
+        "heuristic_no_popularity",
+        "heuristic_no_size",
+        "heuristic_no_deadline_popularity",
+        "heuristic_no_deadline_size",
+        "heuristic_no_popularity_size",
+    ]
+
+    for policy in cache_policy:
+        cmd = f"python run.py --cache_policy {policy} --name cache_{policy}"
+        os.system(cmd)
+
+
 args = ArgumentParser()
 args.add_argument(
     "--v_scaling", action="store_true", help="Run vehicle scaling experiments"
@@ -26,10 +44,16 @@ args.add_argument(
 args.add_argument(
     "--l_removal", action="store_true", help="Run link removal experiments"
 )
+args.add_argument(
+    "--cache_policy", action="store_true", help="Run cache policy experiments"
+)
 opts = args.parse_args()
 
 if opts.v_scaling:
     v_scaling()
+
+if opts.cache_policy:
+    cache_policy()
 
 if opts.l_removal:
     l_removal()
