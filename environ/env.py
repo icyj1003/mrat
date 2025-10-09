@@ -416,6 +416,7 @@ class Environment:
     def compute_utility(
         self,
     ) -> np.ndarray:
+
         utility = (
             np.array(self.utility_track).sum(axis=0) / self.delay.reshape(-1, 1)
         ).mean(axis=0)
@@ -471,6 +472,7 @@ class Environment:
 
         # if delivery is done, force disable all actions (mask 1)
         self.masks[self.delivery_done == 1, :, 1] = 1
+        # self.masks[self.delivery_done == 1, :, 0] = 0
 
         """Connection Status:
         0: cache available in nearby vehicle

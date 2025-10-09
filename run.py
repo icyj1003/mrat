@@ -6,6 +6,7 @@ from policy.delivery_policy import (
     MAPPODeliveryPolicy,
     RandomDeliveryPolicy,
     AllLinkDeliveryPolicy,
+    RATSelection,
 )
 from policy.cache_policy import (
     heuristic_cache_placement,
@@ -34,9 +35,17 @@ if __name__ == "__main__":
     # Get the environment
     env = get_environment(args)
 
+    args.delivery_policy = "drl_selective"
+
     # Initialize delivery policies
     if args.delivery_policy == "mappo":
         delivery_model = MAPPODeliveryPolicy(
+            args,
+            env,
+            writer=writer,
+        )
+    elif args.delivery_policy == "drl_selective":
+        delivery_model = RATSelection(
             args,
             env,
             writer=writer,
