@@ -19,6 +19,24 @@ def l_removal():
         os.system(cmd)
 
 
+def deadline():
+    cmds = [
+        "python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150",
+        "python run.py --delivery_deadline_min 25 --delivery_deadline_max 75 --name dl25-75",
+    ]
+    for cmd in cmds:
+        os.system(cmd)
+
+
+def item_size():
+    cmds = [
+        "python run.py --item_size_min 100 --item_size_max 200 --name is100-200",
+        "python run.py --item_size_min 200 --item_size_max 400 --name is200-400",
+    ]
+    for cmd in cmds:
+        os.system(cmd)
+
+
 def cache_policy():
     cache_policy = [
         "random",

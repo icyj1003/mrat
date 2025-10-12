@@ -69,6 +69,9 @@ def parse_args():
         default=100,
         help="Minimum delivery deadline",
     )
+    # python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150
+    # python run.py --delivery_deadline_min 25 --delivery_deadline_max 75 --name dl25-75
+
     parser.add_argument(
         "--delivery_deadline_max",
         type=int,
@@ -81,6 +84,10 @@ def parse_args():
     parser.add_argument(
         "--item_size_min", type=int, default=50, help="Minimum item size"
     )
+
+    # python run.py --item_size_min 100 --item_size_max 200 --name is100-200
+    # python run.py --item_size_min 200 --item_size_max 400 --name is200-400
+
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--dt", type=int, default=1, help="Time step size")
     parser.add_argument("--cost_weight", type=float, default=0.5, help="Cost weight")
