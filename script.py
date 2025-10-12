@@ -65,6 +65,12 @@ args.add_argument(
 args.add_argument(
     "--cache_policy", action="store_true", help="Run cache policy experiments"
 )
+
+args.add_argument(
+    "--deadline", action="store_true", help="Run delivery deadline experiments"
+)
+args.add_argument("--item_size", action="store_true", help="Run item size experiments")
+
 opts = args.parse_args()
 
 if opts.v_scaling:
@@ -75,3 +81,9 @@ if opts.cache_policy:
 
 if opts.l_removal:
     l_removal()
+
+if opts.deadline:
+    deadline()
+
+if opts.item_size:
+    item_size()
