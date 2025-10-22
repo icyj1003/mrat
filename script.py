@@ -21,8 +21,10 @@ def l_removal():
 
 def deadline():
     cmds = [
-        "python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150",
-        "python run.py --delivery_deadline_min 25 --delivery_deadline_max 75 --name dl25-75",
+        "python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150 --cost_weight 0.3 --delay_weight 0.7",
+        "python run.py --delivery_deadline_min 25 --delivery_deadline_max 75 --name dl25-75 --cost_weight 0.3 --delay_weight 0.7",
+        "python run.py --delivery_deadline_min 10 --delivery_deadline_max 20 --name dl10-20 --cost_weight 0.3 --delay_weight 0.7",
+        "python run.py --delivery_deadline_min 10 --delivery_deadline_max 11 --name dl10-11 --cost_weight 0.3 --delay_weight 0.7",
     ]
     for cmd in cmds:
         os.system(cmd)
