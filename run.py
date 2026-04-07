@@ -193,13 +193,15 @@ if __name__ == "__main__":
     )
 
     # Print the evaluation metrics
-    print(f"[{current}] Evaluation Metrics ===========================")
+    print(f"[{current}] Evaluation Metrics {args.name} ===========================")
     for key, value in evaluate.items():
         print(f"{key}: {value}")
 
     # Write evaluation metrics to ./out.txt
     with open("./out.txt", "a") as f:
-        f.write(f"[{current}] Evaluation Metrics ===========================\n")
+        f.write(
+            f"[{current}] Evaluation Metrics {args.name} ===========================\n"
+        )
         for key, value in evaluate.items():
             f.write(f"{key}: {value}\n")
         f.write("\n")
