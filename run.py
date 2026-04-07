@@ -2,25 +2,24 @@ import torch
 from tqdm import tqdm
 
 from config import parse_args
-from policy.delivery_policy import (
-    MAPPODeliveryPolicy,
-    RandomDeliveryPolicy,
-    AllLinkDeliveryPolicy,
-    RATSelection,
-)
 from policy.cache_policy import (
     heuristic_cache_placement,
-    random_cache_placement,
     no_cache_placement,
+    random_cache_placement,
+)
+from policy.delivery_policy import (
+    AllLinkDeliveryPolicy,
+    MAPPODeliveryPolicy,
+    RandomDeliveryPolicy,
+    RATSelection,
 )
 from policy.selection_policy import (
     GTVS,
-    no_vehicle_selection,
     clustering_vehicle_selection,
+    no_vehicle_selection,
     random_vehicle_selection,
 )
-from utils import get_environment, log_and_collect, aggregate_metrics, get_logger
-
+from utils import aggregate_metrics, get_environment, get_logger, log_and_collect
 
 if __name__ == "__main__":
     # Parse command line arguments
