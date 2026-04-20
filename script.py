@@ -27,9 +27,10 @@ def get_candidate(code):
 
 
 def v_scaling():
+    cache, delivery = get_candidate(opts.code)
     num_vehicles_list = [10, 20, 30, 40, 50]
     for num_vehicles in num_vehicles_list:
-        cmd = f"python run.py --num_vehicles {num_vehicles} --name vehicle_scale_{num_vehicles}"
+        cmd = f"python run.py --num_vehicles {num_vehicles} --name vehicle_scale_{num_vehicles}-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}"
         os.system(cmd)
 
 
