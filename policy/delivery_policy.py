@@ -305,3 +305,37 @@ class RATSelection(DeliveryPolicy):
 
     def model(self):
         return self.agent.actor.state_dict()
+
+
+# class DeliveryPolicy:
+#     def __init__(self, *args, **kwargs):
+#         self.steps = 0
+
+#     def act(self, *args, **kwargs):
+#         self.steps += 1
+
+#     def store_transition(self, *args, **kwargs):
+#         pass
+
+#     def train(self, *args, **kwargs):
+#         pass
+
+#     def model(self, *args, **kwargs):
+#         pass
+
+
+class FairnessAwareDeliveryPolicy(DeliveryPolicy):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def act(self, *args, **kwargs):
+        return super().act(*args, **kwargs)
+
+    def store_transition(self, *args, **kwargs):
+        return super().store_transition(*args, **kwargs)
+
+    def train(self, *args, **kwargs):
+        return super().train(*args, **kwargs)
+
+    def model(self, *args, **kwargs):
+        return super().model(*args, **kwargs)

@@ -2,4 +2,5 @@ __pycache__
 note.md
 runs
 venv
-out.txt
+out.out
+.vscode

@@ -197,8 +197,8 @@ if __name__ == "__main__":
     for key, value in evaluate.items():
         print(f"{key}: {value}")
 
-    # Write evaluation metrics to ./out.txt
-    with open("./out.txt", "a") as f:
+    # Write evaluation metrics to ./out.out
+    with open("./out.out", "a") as f:
         f.write(
             f"[{current}] Evaluation Metrics {args.name} ===========================\n"
         )

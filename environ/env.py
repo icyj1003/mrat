@@ -69,8 +69,9 @@ class Environment:
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
         cost_scale: float = 3e1,
-        delay_weight: float = 1,
-        cost_weight: float = 0,
+        # (0.2, 0.8), (0.4, 0.6), (0.6, 0.4), (0.8, 0.2)
+        delay_weight: float = 0.2,
+        cost_weight: float = 0.8,
         disable_v2v: bool = False,
         disable_wifi: bool = False,
         disable_pc5: bool = False,
