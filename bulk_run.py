@@ -1,6 +1,7 @@
 import os
 
-code = "12345"
+code = "1"
 
 for c in code:
-    os.system(f"python script.py --code {c} --v_scaling --deadline --item_size")
+    os.system(f"python script.py --code {c} --v_scaling")
+    # os.system(f"python script.py --code {c} --v_scaling --deadline --item_size")

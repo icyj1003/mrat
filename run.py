@@ -15,7 +15,6 @@ from policy.delivery_policy import (
     TrueAllLink,
     CheapSel,
     GA,
-    CostAwareGreedy,
 )
 from policy.selection_policy import (
     GTVS,
