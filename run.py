@@ -12,6 +12,10 @@ from policy.delivery_policy import (
     MAPPODeliveryPolicy,
     RandomDeliveryPolicy,
     RATSelection,
+    TrueAllLink,
+    CheapSel,
+    GA,
+    CostAwareGreedy,
 )
 from policy.selection_policy import (
     GTVS,
@@ -34,8 +38,6 @@ if __name__ == "__main__":
     # Get the environment
     env = get_environment(args)
 
-    args.delivery_policy = "drl_selective"
-
     # Initialize delivery policies
     if args.delivery_policy == "mappo":
         delivery_model = MAPPODeliveryPolicy(
@@ -51,6 +53,24 @@ if __name__ == "__main__":
         )
     elif args.delivery_policy == "all":
         delivery_model = AllLinkDeliveryPolicy()
+    elif args.delivery_policy == "true_all_link":
+        delivery_model = TrueAllLink(
+            args,
+            env,
+            writer=writer,
+        )
+    elif args.delivery_policy == "cheapselect":
+        delivery_model = CheapSel(
+            args,
+            env,
+            writer=writer,
+        )
+    elif args.delivery_policy == "ga":
+        delivery_model = GA(
+            args,
+            env,
+            writer=writer,
+        )
     elif args.delivery_policy == "random":
         delivery_model = RandomDeliveryPolicy(
             num_agents=args.num_vehicles,
@@ -60,8 +80,12 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Unknown delivery policy: {args.delivery_policy}")
 
-    # Compute the total episodes
-    total_episodes = args.training_episodes + args.evaluation_episodes
+    # Compute the total episodes: include training only for learning policies
+    total_episodes = (
+        (args.training_episodes + args.evaluation_episodes)
+        if args.delivery_policy in ["mappo", "drl_selective"]
+        else args.evaluation_episodes
+    )
 
     # evaluation metrics tracking
     infos = []
@@ -157,8 +181,12 @@ if __name__ == "__main__":
                 violation_tensor,  # num_agents x 1
             )
 
-            # Update the cache policy
-            if episode > 0 and delivery_model.steps % args.small_train_per_n_steps == 0:
+            # Update the delivery model only for learning policies
+            if (
+                args.delivery_policy in ["mappo", "drl_selective"]
+                and episode > 0
+                and delivery_model.steps % args.small_train_per_n_steps == 0
+            ):
                 delivery_model.train()
 
         # Collect episode information

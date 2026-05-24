@@ -1,6 +1,9 @@
+import numpy as np
 import torch
 
 from agent.mappo import MAPPO
+from environ.utils import compute_data_rate
+from .bga import BGA
 
 
 class DeliveryPolicy:
@@ -307,29 +310,38 @@ class RATSelection(DeliveryPolicy):
         return self.agent.actor.state_dict()
 
 
-# class DeliveryPolicy:
-#     def __init__(self, *args, **kwargs):
-#         self.steps = 0
-
-#     def act(self, *args, **kwargs):
-#         self.steps += 1
-
-#     def store_transition(self, *args, **kwargs):
-#         pass
-
-#     def train(self, *args, **kwargs):
-#         pass
-
-#     def model(self, *args, **kwargs):
-#         pass
-
-
-class FairnessAwareDeliveryPolicy(DeliveryPolicy):
-    def __init__(self, *args, **kwargs):
+class TrueAllLink(DeliveryPolicy):
+    def __init__(self, args, env, writer=None):
         super().__init__()
+        self.args = args
+        self.env = env
+        self.num_vehicles = env.num_vehicles
+        self.num_rats = env.num_rats
 
-    def act(self, *args, **kwargs):
-        return super().act(*args, **kwargs)
+    def _to_numpy(self, tensor):
+        if isinstance(tensor, torch.Tensor):
+            return tensor.cpu().numpy()
+        return tensor
+
+    def act(self, states, masks, projection=None):
+        super().act()
+
+        states_np = self._to_numpy(states)
+        masks_np = self._to_numpy(masks)
+        actions = np.ones((self.num_vehicles, self.num_rats), dtype=np.int64)
+
+        # Force disable actions based on masks
+        for i in range(self.num_vehicles):
+            for j in range(self.num_rats):
+                if masks_np[i, j, 1] == 1:
+                    actions[i, j] = 0  # Force disable this RAT
+                elif masks_np[i, j, 0] == 1:
+                    actions[i, j] = 1  # Force enable this RAT
+
+        # Convert back to tensor
+        actions_tensor = torch.tensor(actions, dtype=torch.long)
+        log_probs = torch.zeros_like(actions_tensor, dtype=torch.float32)
+        return actions_tensor, log_probs
 
     def store_transition(self, *args, **kwargs):
         return super().store_transition(*args, **kwargs)
@@ -339,3 +351,997 @@ class FairnessAwareDeliveryPolicy(DeliveryPolicy):
 
     def model(self, *args, **kwargs):
         return super().model(*args, **kwargs)
+
+
+class CheapSel(DeliveryPolicy):
+    def __init__(self, args, env, writer=None):
+        super().__init__()
+        self.args = args
+        self.env = env
+        self.num_vehicles = env.num_vehicles
+        self.num_rats = env.num_rats
+
+    def _to_numpy(self, tensor):
+        if isinstance(tensor, torch.Tensor):
+            return tensor.cpu().numpy()
+        return tensor
+
+    def act(self, states, masks, projection=None):
+        super().act()
+
+        masks_np = self._to_numpy(masks)
+        actions = np.zeros((self.num_vehicles, self.num_rats), dtype=np.int64)
+
+        for vehicle_index in range(self.num_vehicles):
+            costs = (
+                np.ones((4,), dtype=np.float32) * np.inf
+            )  # Initialize costs for each RAT with a large number
+            # get the requested item index
+            requested_item = np.where(self.env.requests_matrix[vehicle_index] == 1)[0]
+
+            # ignore if request has been satisfied
+            if self.env.delivery_done[vehicle_index] == 1:
+                continue
+
+            # download with v2n
+            if masks_np[vehicle_index, 0, 1] == 0:  # if v2n is not restricted
+                # compute the distance from the vehicle to the BS
+                distance = self.env.bs_distance[vehicle_index]
+
+                # compute v2n data rate with macro path loss model
+                data_rate = compute_data_rate(
+                    allocated_spectrum=self.env.v2n_bandwidth,
+                    transmission_power=self.env.v2n_transmission_power,
+                    noise_power=self.env.noise_power,
+                    distance=distance,
+                    path_loss_model="macro",
+                )
+
+                # compute the number of segments that can be transfered
+                v2n_transfered_segment = np.floor(
+                    data_rate * self.env.dt / self.env.code_size
+                )
+
+                # accumulate the cost
+                costs[0] = (
+                    self.env.v2n_cost * v2n_transfered_segment * self.env.code_size
+                )
+
+            # download with v2v
+            if masks_np[vehicle_index, 1, 1] == 0:  # if v2v is not restricted
+                nearby_vehicles = []
+
+                # search all vehicles in communication range
+                nearby_vehicles = [
+                    (
+                        nearby_vehicle_index,
+                        self.env.vehicle_distance[vehicle_index, nearby_vehicle_index],
+                    )
+                    for nearby_vehicle_index in range(self.env.num_vehicles)
+                    if vehicle_index != nearby_vehicle_index
+                    and self.env.vehicle_distance[vehicle_index, nearby_vehicle_index]
+                    < self.env.v2v_pc5_coverage
+                    and self.env.cache[
+                        self.env.num_edges + nearby_vehicle_index, requested_item
+                    ]
+                    == 1
+                ]
+
+                # search nearby vehicles that have the requested item
+
+                if len(nearby_vehicles) > 0:
+                    min_distance = self.env.v2v_pc5_coverage
+
+                    for nearby_vehicle_index, distance in nearby_vehicles:
+                        if distance < min_distance:
+                            min_distance = distance
+
+                    # compute the v2v data rate with micro path loss model
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=self.env.v2v_bandwidth,
+                        transmission_power=self.env.v2v_transmission_power,
+                        noise_power=self.env.noise_power,
+                        distance=min_distance,
+                        path_loss_model="micro",
+                    )
+
+                    # compute the number of segments that can be transfered
+                    v2v_transfered_segment = np.floor(
+                        data_rate * self.env.dt / self.env.code_size
+                    )
+
+                    # accumulate the cost
+                    costs[1] = (
+                        self.env.v2v_cost * v2v_transfered_segment * self.env.code_size
+                    )
+
+            # download with v2i pc5 and vehicle is not out of the road
+            if masks_np[vehicle_index, 2, 1] == 0 and self.env.out[vehicle_index] == 0:
+                # compute the distance from the vehicle to its local edge
+                distance = self.env.local_edge_distance[vehicle_index]
+
+                # compute v2i pc5 data rate with micro path loss model
+                data_rate = compute_data_rate(
+                    allocated_spectrum=self.env.v2i_pc5_bandwidth,
+                    transmission_power=self.env.v2i_pc5_transmission_power,
+                    noise_power=self.env.noise_power,
+                    distance=distance,
+                    path_loss_model="micro",
+                )
+
+                # check if the edge has the requested item
+                if (
+                    self.env.cache[
+                        int(self.env.local_of[vehicle_index]), requested_item
+                    ]
+                    == 1
+                ):
+                    # compute the number of segments that can be transfered directly from the local edge
+                    v2i_pc5_transfered_segment = np.floor(
+                        data_rate * self.env.dt / self.env.code_size
+                    )
+
+                    # accumulate the collected segments
+                    costs[2] = (
+                        self.env.v2i_pc5_cost
+                        * v2i_pc5_transfered_segment
+                        * self.env.code_size
+                    )
+                # if the edge does not have the requested item
+                else:
+                    # check for the nearest neighbor edge (by hop count) that has the requested item
+                    hop_distance = 99
+                    for edge_index in range(self.env.num_edges):
+                        if self.env.cache[
+                            edge_index, requested_item
+                        ] == 1 and edge_index != int(self.env.local_of[vehicle_index]):
+                            hop_distance = min(
+                                hop_distance,
+                                abs(edge_index - int(self.env.local_of[vehicle_index])),
+                            )
+
+                    # if there is a neighbor edge that has the requested item
+                    if hop_distance < 99 and not self.env.remove_edge_cooperation:
+                        v2i_pc5_transfered_segment = np.floor(
+                            self.env.dt
+                            * self.env.i2i_data_rate
+                            * data_rate
+                            / (
+                                self.env.code_size
+                                * (data_rate * hop_distance + self.env.i2i_data_rate)
+                            )
+                        )
+                        # accumulate the cost
+                        costs[2] += (
+                            v2i_pc5_transfered_segment
+                            * self.env.code_size
+                            * (self.env.i2i_cost + self.env.v2i_pc5_cost)
+                        )
+
+                    # if there is no neighbor edge that has the requested item, use backhaul link
+                    else:
+                        v2i_pc5_transfered_segment = np.floor(
+                            self.env.dt
+                            * self.env.i2n_data_rate
+                            * data_rate
+                            / (
+                                self.env.code_size
+                                * (data_rate + self.env.i2n_data_rate)
+                            )
+                        )
+                        # accumulate the cost: i2n + v2i_pc5
+                        costs[2] += (
+                            v2i_pc5_transfered_segment
+                            * self.env.code_size
+                            * (self.env.i2n_cost + self.env.v2i_pc5_cost)
+                        )
+
+            # download with v2i wifi and vehicle is not out of the road
+            if masks_np[vehicle_index, 3, 1] == 0 and self.env.out[vehicle_index] == 0:
+                # check if the vehicle is within the coverage of the edge wifi
+                distance = self.env.local_edge_distance[vehicle_index]
+
+                if distance < self.env.v2i_wifi_coverage:
+                    # compute v2i wifi data rate with micro path loss model
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=self.env.v2i_wifi_bandwidth,
+                        transmission_power=self.env.v2i_wifi_transmission_power,
+                        noise_power=self.env.noise_power,
+                        distance=distance,
+                        path_loss_model="micro",
+                    )
+
+                    # check if the edge has the requested item
+                    if (
+                        self.env.cache[
+                            int(self.env.local_of[vehicle_index]), requested_item
+                        ]
+                        == 1
+                    ):
+                        # compute the number of segments that can be transfered directly from the local edge
+                        v2i_wifi_transfered_segment = np.floor(
+                            data_rate * self.env.dt / self.env.code_size
+                        )
+
+                        # accumulate the collected segments
+                        costs[3] = (
+                            self.env.v2i_wifi_cost
+                            * v2i_wifi_transfered_segment
+                            * self.env.code_size
+                        )
+                    # if the edge does not have the requested item
+                    else:
+                        # check for the nearest neighbor edge (by hop count) that has the requested item
+                        hop_distance = 99
+                        for edge_index in range(self.env.num_edges):
+                            if self.env.cache[
+                                edge_index, requested_item
+                            ] == 1 and edge_index != int(
+                                self.env.local_of[vehicle_index]
+                            ):
+                                hop_distance = min(
+                                    hop_distance,
+                                    abs(
+                                        edge_index
+                                        - int(self.env.local_of[vehicle_index])
+                                    ),
+                                )
+
+                        # if there is a neighbor edge that has the requested item
+                        if hop_distance < 99 and not self.env.remove_edge_cooperation:
+                            v2i_wifi_transfered_segment = np.floor(
+                                self.env.dt
+                                * self.env.i2i_data_rate
+                                * data_rate
+                                / (
+                                    self.env.code_size
+                                    * (
+                                        data_rate
+                                        + self.env.i2i_data_rate * hop_distance
+                                    )
+                                )
+                            )
+                            # accumulate the cost
+                            costs[3] = (
+                                v2i_wifi_transfered_segment
+                                * self.env.code_size
+                                * (self.env.i2i_cost + self.env.v2i_wifi_cost)
+                            )
+
+                        # if there is no neighbor edge that has the requested item, use backhaul link
+                        else:
+                            v2i_wifi_transfered_segment = np.floor(
+                                self.env.dt
+                                * self.env.i2n_data_rate
+                                * data_rate
+                                / (
+                                    self.env.code_size
+                                    * (data_rate + self.env.i2n_data_rate)
+                                )
+                            )
+                            # accumulate the cost
+                            costs[3] = (
+                                self.env.i2n_cost
+                                * v2i_wifi_transfered_segment
+                                * self.env.code_size
+                                + self.env.v2i_wifi_cost
+                                * v2i_wifi_transfered_segment
+                                * self.env.code_size
+                            )
+            temp_actions = np.zeros((self.num_rats,), dtype=np.int64)
+            temp_actions[torch.argmin(torch.tensor(costs))] = 1
+            actions[vehicle_index] = temp_actions
+
+        log_probs = torch.zeros_like(
+            torch.tensor(actions, dtype=torch.float32), dtype=torch.float32
+        )
+        return torch.tensor(actions, dtype=torch.long), log_probs
+
+    def store_transition(self, *args, **kwargs):
+        return super().store_transition(*args, **kwargs)
+
+    def train(self, *args, **kwargs):
+        return super().train(*args, **kwargs)
+
+    def model(self, *args, **kwargs):
+        return super().model(*args, **kwargs)
+
+
+class GA(DeliveryPolicy):
+    def __init__(self, args, env, writer=None):
+        super().__init__()
+        self.args = args
+        self.env = env
+        self.num_vehicles = env.num_vehicles
+        self.num_rats = env.num_rats
+
+    def _to_numpy(self, tensor):
+        if isinstance(tensor, torch.Tensor):
+            return tensor.cpu().numpy()
+        return tensor
+
+    def convert_action(self, flattened_actions):
+        return flattened_actions.reshape(self.num_vehicles, self.num_rats)
+
+    def project_action(self, flattened_actions, projection, masks):
+        actions = self.convert_action(flattened_actions)
+
+        for vehicle_index in range(self.num_vehicles):
+            # if force disable, set to 0
+            # if force enable, set to 1
+            for rat_index in range(self.num_rats):
+                if masks[vehicle_index, rat_index, 1] == 1:
+                    actions[vehicle_index, rat_index] = 0
+                elif masks[vehicle_index, rat_index, 0] == 1:
+                    actions[vehicle_index, rat_index] = 1
+
+        if projection is not None:
+            actions = projection(actions)
+
+        return actions
+
+    def act(self, states, masks, projection=None):
+        super().act()
+        actions = np.zeros((self.num_vehicles, self.num_rats), dtype=np.int64)
+
+        def values(arr):
+            actions = self.convert_action(arr)
+            actions = torch.tensor(actions, dtype=torch.float32)
+            for vehicle_index in range(self.num_vehicles):
+                # if force disable, set to 0
+                # if force enable, set to 1
+                for rat_index in range(self.num_rats):
+                    if masks[vehicle_index, rat_index, 1] == 1:
+                        actions[vehicle_index, rat_index] = 0
+                    elif masks[vehicle_index, rat_index, 0] == 1:
+                        actions[vehicle_index, rat_index] = 1
+
+            if projection is not None:
+                arr = projection(actions)
+
+            costs, collected = self.get_info(arr)
+            return np.mean(collected / (costs + 1e-10)).item()
+
+        bga = BGA(
+            pop_shape=(20, self.num_vehicles * self.num_rats),
+            method=values,
+            max_round=15,
+            p_m=0.02,
+        )
+
+        best_solution, best_value = bga.run()
+
+        actions = self.project_action(
+            torch.tensor(best_solution, dtype=torch.float32), projection, masks
+        )
+        log_probs = torch.zeros_like(actions, dtype=torch.float32)
+        return actions, log_probs
+
+    def get_info(self, actions):
+        costs = np.zeros(self.num_vehicles)
+        collected = np.zeros(self.num_vehicles)
+
+        for vehicle_index in range(self.num_vehicles):
+            # get the requested item index
+            requested_item = np.where(self.env.requests_matrix[vehicle_index] == 1)[0]
+
+            # ignore if request has been satisfied
+            if self.env.delivery_done[vehicle_index] == 1:
+                continue
+
+            # download with v2n
+            if actions[vehicle_index, 0] == 1:  # if v2n is not restricted
+                # compute the distance from the vehicle to the BS
+                distance = self.env.bs_distance[vehicle_index]
+
+                # compute v2n data rate with macro path loss model
+                data_rate = compute_data_rate(
+                    allocated_spectrum=self.env.v2n_bandwidth,
+                    transmission_power=self.env.v2n_transmission_power,
+                    noise_power=self.env.noise_power,
+                    distance=distance,
+                    path_loss_model="macro",
+                )
+
+                # compute the number of segments that can be transfered
+                v2n_transfered_segment = np.floor(
+                    data_rate * self.env.dt / self.env.code_size
+                )
+                collected[vehicle_index] += v2n_transfered_segment
+
+                # accumulate the cost
+                costs[vehicle_index] += (
+                    self.env.v2n_cost * v2n_transfered_segment * self.env.code_size
+                )
+
+            # download with v2v
+            if actions[vehicle_index, 1] == 1:  # if v2v is not restricted
+                nearby_vehicles = []
+
+                # search all vehicles in communication range
+                nearby_vehicles = [
+                    (
+                        nearby_vehicle_index,
+                        self.env.vehicle_distance[vehicle_index, nearby_vehicle_index],
+                    )
+                    for nearby_vehicle_index in range(self.env.num_vehicles)
+                    if vehicle_index != nearby_vehicle_index
+                    and self.env.vehicle_distance[vehicle_index, nearby_vehicle_index]
+                    < self.env.v2v_pc5_coverage
+                    and self.env.cache[
+                        self.env.num_edges + nearby_vehicle_index, requested_item
+                    ]
+                    == 1
+                ]
+
+                # search nearby vehicles that have the requested item
+
+                if len(nearby_vehicles) > 0:
+                    min_distance = self.env.v2v_pc5_coverage
+
+                    for nearby_vehicle_index, distance in nearby_vehicles:
+                        if distance < min_distance:
+                            min_distance = distance
+
+                    # compute the v2v data rate with micro path loss model
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=self.env.v2v_bandwidth,
+                        transmission_power=self.env.v2v_transmission_power,
+                        noise_power=self.env.noise_power,
+                        distance=min_distance,
+                        path_loss_model="micro",
+                    )
+
+                    # compute the number of segments that can be transfered
+                    v2v_transfered_segment = np.floor(
+                        data_rate * self.env.dt / self.env.code_size
+                    )
+                    collected[vehicle_index] += v2v_transfered_segment
+
+                    # accumulate the cost
+                    costs[vehicle_index] += (
+                        self.env.v2v_cost * v2v_transfered_segment * self.env.code_size
+                    )
+
+            # download with v2i pc5 and vehicle is not out of the road
+            if actions[vehicle_index, 2] == 1 and self.env.out[vehicle_index] == 0:
+                # compute the distance from the vehicle to its local edge
+                distance = self.env.local_edge_distance[vehicle_index]
+
+                # compute v2i pc5 data rate with micro path loss model
+                data_rate = compute_data_rate(
+                    allocated_spectrum=self.env.v2i_pc5_bandwidth,
+                    transmission_power=self.env.v2i_pc5_transmission_power,
+                    noise_power=self.env.noise_power,
+                    distance=distance,
+                    path_loss_model="micro",
+                )
+
+                # check if the edge has the requested item
+                if (
+                    self.env.cache[
+                        int(self.env.local_of[vehicle_index]), requested_item
+                    ]
+                    == 1
+                ):
+                    # compute the number of segments that can be transfered directly from the local edge
+                    v2i_pc5_transfered_segment = np.floor(
+                        data_rate * self.env.dt / self.env.code_size
+                    )
+
+                    # accumulate the collected segments
+                    collected[vehicle_index] += v2i_pc5_transfered_segment
+                    costs[vehicle_index] += (
+                        self.env.v2i_pc5_cost
+                        * v2i_pc5_transfered_segment
+                        * self.env.code_size
+                    )
+                # if the edge does not have the requested item
+                else:
+                    # check for the nearest neighbor edge (by hop count) that has the requested item
+                    hop_distance = 99
+                    for edge_index in range(self.env.num_edges):
+                        if self.env.cache[
+                            edge_index, requested_item
+                        ] == 1 and edge_index != int(self.env.local_of[vehicle_index]):
+                            hop_distance = min(
+                                hop_distance,
+                                abs(edge_index - int(self.env.local_of[vehicle_index])),
+                            )
+
+                    # if there is a neighbor edge that has the requested item
+                    if hop_distance < 99 and not self.env.remove_edge_cooperation:
+                        v2i_pc5_transfered_segment = np.floor(
+                            self.env.dt
+                            * self.env.i2i_data_rate
+                            * data_rate
+                            / (
+                                self.env.code_size
+                                * (data_rate * hop_distance + self.env.i2i_data_rate)
+                            )
+                        )
+                        collected[vehicle_index] += v2i_pc5_transfered_segment
+                        # accumulate the cost
+                        costs[vehicle_index] += (
+                            v2i_pc5_transfered_segment
+                            * self.env.code_size
+                            * (self.env.i2i_cost + self.env.v2i_pc5_cost)
+                        )
+
+                    # if there is no neighbor edge that has the requested item, use backhaul link
+                    else:
+                        v2i_pc5_transfered_segment = np.floor(
+                            self.env.dt
+                            * self.env.i2n_data_rate
+                            * data_rate
+                            / (
+                                self.env.code_size
+                                * (data_rate + self.env.i2n_data_rate)
+                            )
+                        )
+                        collected[vehicle_index] += v2i_pc5_transfered_segment
+                        # accumulate the cost: i2n + v2i_pc5
+                        costs[vehicle_index] += (
+                            v2i_pc5_transfered_segment
+                            * self.env.code_size
+                            * (self.env.i2n_cost + self.env.v2i_pc5_cost)
+                        )
+
+            # download with v2i wifi and vehicle is not out of the road
+            if actions[vehicle_index, 3] == 1 and self.env.out[vehicle_index] == 0:
+                # check if the vehicle is within the coverage of the edge wifi
+                distance = self.env.local_edge_distance[vehicle_index]
+
+                if distance < self.env.v2i_wifi_coverage:
+                    # compute v2i wifi data rate with micro path loss model
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=self.env.v2i_wifi_bandwidth,
+                        transmission_power=self.env.v2i_wifi_transmission_power,
+                        noise_power=self.env.noise_power,
+                        distance=distance,
+                        path_loss_model="micro",
+                    )
+
+                    # check if the edge has the requested item
+                    if (
+                        self.env.cache[
+                            int(self.env.local_of[vehicle_index]), requested_item
+                        ]
+                        == 1
+                    ):
+                        # compute the number of segments that can be transfered directly from the local edge
+                        v2i_wifi_transfered_segment = np.floor(
+                            data_rate * self.env.dt / self.env.code_size
+                        )
+
+                        collected[vehicle_index] += v2i_wifi_transfered_segment
+
+                        # accumulate the collected segments
+                        costs[vehicle_index] = (
+                            self.env.v2i_wifi_cost
+                            * v2i_wifi_transfered_segment
+                            * self.env.code_size
+                        )
+                    # if the edge does not have the requested item
+                    else:
+                        # check for the nearest neighbor edge (by hop count) that has the requested item
+                        hop_distance = 99
+                        for edge_index in range(self.env.num_edges):
+                            if self.env.cache[
+                                edge_index, requested_item
+                            ] == 1 and edge_index != int(
+                                self.env.local_of[vehicle_index]
+                            ):
+                                hop_distance = min(
+                                    hop_distance,
+                                    abs(
+                                        edge_index
+                                        - int(self.env.local_of[vehicle_index])
+                                    ),
+                                )
+
+                        # if there is a neighbor edge that has the requested item
+                        if hop_distance < 99 and not self.env.remove_edge_cooperation:
+                            v2i_wifi_transfered_segment = np.floor(
+                                self.env.dt
+                                * self.env.i2i_data_rate
+                                * data_rate
+                                / (
+                                    self.env.code_size
+                                    * (
+                                        data_rate
+                                        + self.env.i2i_data_rate * hop_distance
+                                    )
+                                )
+                            )
+                            collected[vehicle_index] += v2i_wifi_transfered_segment
+                            # accumulate the cost
+                            costs[vehicle_index] = (
+                                v2i_wifi_transfered_segment
+                                * self.env.code_size
+                                * (self.env.i2i_cost + self.env.v2i_wifi_cost)
+                            )
+
+                        # if there is no neighbor edge that has the requested item, use backhaul link
+                        else:
+                            v2i_wifi_transfered_segment = np.floor(
+                                self.env.dt
+                                * self.env.i2n_data_rate
+                                * data_rate
+                                / (
+                                    self.env.code_size
+                                    * (data_rate + self.env.i2n_data_rate)
+                                )
+                            )
+                            collected[vehicle_index] += v2i_wifi_transfered_segment
+                            # accumulate the cost
+                            costs[vehicle_index] = (
+                                self.env.i2n_cost
+                                * v2i_wifi_transfered_segment
+                                * self.env.code_size
+                                + self.env.v2i_wifi_cost
+                                * v2i_wifi_transfered_segment
+                                * self.env.code_size
+                            )
+
+        return costs, collected
+
+    def store_transition(self, *args, **kwargs):
+        return super().store_transition(*args, **kwargs)
+
+    def train(self, *args, **kwargs):
+        return super().train(*args, **kwargs)
+
+    def model(self, *args, **kwargs):
+        return super().model(*args, **kwargs)
+
+
+# class CostAwareGreedy(DeliveryPolicy):
+#     def __init__(self, args, env, writer=None):
+#         super().__init__()
+#         self.args = args
+#         self.env = env
+#         self.num_vehicles = env.num_vehicles
+#         self.num_rats = env.num_rats
+
+#     def _to_numpy(self, tensor):
+#         if isinstance(tensor, torch.Tensor):
+#             return tensor.cpu().numpy()
+#         return tensor
+
+#     def act(self, states, masks, projection=None):
+#         super().act()
+#         actions = np.zeros((self.num_vehicles, self.num_rats), dtype=np.int64)
+#         masks_np = self._to_numpy(masks)
+
+#         # remaining segments
+#         remaining_segments = self.env.remaining_segments
+
+#         # remaining time
+#         remaining_time = self.env.remaining_deadline
+
+#         # required segments per time step
+#         required_segments_per_time_step = remaining_segments / (remaining_time + 1e-10)
+
+#         self.env.current_min_seg =
+
+#         for vehicle_index in range(self.num_vehicles):
+#             costs = (
+#                 np.ones((4,), dtype=np.float32) * np.inf
+#             )  # Initialize costs for each RAT with a large number
+#             collected = np.zeros(
+#                 (4,), dtype=np.float32
+#             )  # Initialize collected segments for each RAT
+#             # get the requested item index
+#             requested_item = np.where(self.env.requests_matrix[vehicle_index] == 1)[0]
+
+#             # ignore if request has been satisfied
+#             if self.env.delivery_done[vehicle_index] == 1:
+#                 continue
+
+#             # download with v2n
+#             if masks_np[vehicle_index, 0, 1] == 0:  # if v2n is not restricted
+#                 # compute the distance from the vehicle to the BS
+#                 distance = self.env.bs_distance[vehicle_index]
+
+#                 # compute v2n data rate with macro path loss model
+#                 data_rate = compute_data_rate(
+#                     allocated_spectrum=self.env.v2n_bandwidth,
+#                     transmission_power=self.env.v2n_transmission_power,
+#                     noise_power=self.env.noise_power,
+#                     distance=distance,
+#                     path_loss_model="macro",
+#                 )
+
+#                 # compute the number of segments that can be transfered
+#                 v2n_transfered_segment = np.floor(
+#                     data_rate * self.env.dt / self.env.code_size
+#                 )
+
+#                 # compute the collected segments
+#                 collected[0] = v2n_transfered_segment
+
+#                 # accumulate the cost
+#                 costs[0] = (
+#                     self.env.v2n_cost * v2n_transfered_segment * self.env.code_size
+#                 )
+
+#             # download with v2v
+#             if masks_np[vehicle_index, 1, 1] == 0:  # if v2v is not restricted
+#                 nearby_vehicles = []
+
+#                 # search all vehicles in communication range
+#                 nearby_vehicles = [
+#                     (
+#                         nearby_vehicle_index,
+#                         self.env.vehicle_distance[vehicle_index, nearby_vehicle_index],
+#                     )
+#                     for nearby_vehicle_index in range(self.env.num_vehicles)
+#                     if vehicle_index != nearby_vehicle_index
+#                     and self.env.vehicle_distance[vehicle_index, nearby_vehicle_index]
+#                     < self.env.v2v_pc5_coverage
+#                     and self.env.cache[
+#                         self.env.num_edges + nearby_vehicle_index, requested_item
+#                     ]
+#                     == 1
+#                 ]
+
+#                 # search nearby vehicles that have the requested item
+
+#                 if len(nearby_vehicles) > 0:
+#                     min_distance = self.env.v2v_pc5_coverage
+
+#                     for nearby_vehicle_index, distance in nearby_vehicles:
+#                         if distance < min_distance:
+#                             min_distance = distance
+
+#                     # compute the v2v data rate with micro path loss model
+#                     data_rate = compute_data_rate(
+#                         allocated_spectrum=self.env.v2v_bandwidth,
+#                         transmission_power=self.env.v2v_transmission_power,
+#                         noise_power=self.env.noise_power,
+#                         distance=min_distance,
+#                         path_loss_model="micro",
+#                     )
+
+#                     # compute the number of segments that can be transfered
+#                     v2v_transfered_segment = np.floor(
+#                         data_rate * self.env.dt / self.env.code_size
+#                     )
+
+#                     # compute the collected segments
+#                     collected[1] = v2v_transfered_segment
+
+#                     # accumulate the cost
+#                     costs[1] = (
+#                         self.env.v2v_cost * v2v_transfered_segment * self.env.code_size
+#                     )
+
+#             # download with v2i pc5 and vehicle is not out of the road
+#             if masks_np[vehicle_index, 2, 1] == 0 and self.env.out[vehicle_index] == 0:
+#                 # compute the distance from the vehicle to its local edge
+#                 distance = self.env.local_edge_distance[vehicle_index]
+
+#                 # compute v2i pc5 data rate with micro path loss model
+#                 data_rate = compute_data_rate(
+#                     allocated_spectrum=self.env.v2i_pc5_bandwidth,
+#                     transmission_power=self.env.v2i_pc5_transmission_power,
+#                     noise_power=self.env.noise_power,
+#                     distance=distance,
+#                     path_loss_model="micro",
+#                 )
+
+#                 # check if the edge has the requested item
+#                 if (
+#                     self.env.cache[
+#                         int(self.env.local_of[vehicle_index]), requested_item
+#                     ]
+#                     == 1
+#                 ):
+#                     # compute the number of segments that can be transfered directly from the local edge
+#                     v2i_pc5_transfered_segment = np.floor(
+#                         data_rate * self.env.dt / self.env.code_size
+#                     )
+
+#                     # compute the collected segments
+#                     collected[2] = v2i_pc5_transfered_segment
+
+#                     # accumulate the collected segments
+#                     costs[2] = (
+#                         self.env.v2i_pc5_cost
+#                         * v2i_pc5_transfered_segment
+#                         * self.env.code_size
+#                     )
+#                 # if the edge does not have the requested item
+#                 else:
+#                     # check for the nearest neighbor edge (by hop count) that has the requested item
+#                     hop_distance = 99
+#                     for edge_index in range(self.env.num_edges):
+#                         if self.env.cache[
+#                             edge_index, requested_item
+#                         ] == 1 and edge_index != int(self.env.local_of[vehicle_index]):
+#                             hop_distance = min(
+#                                 hop_distance,
+#                                 abs(edge_index - int(self.env.local_of[vehicle_index])),
+#                             )
+
+#                     # if there is a neighbor edge that has the requested item
+#                     if hop_distance < 99 and not self.env.remove_edge_cooperation:
+#                         v2i_pc5_transfered_segment = np.floor(
+#                             self.env.dt
+#                             * self.env.i2i_data_rate
+#                             * data_rate
+#                             / (
+#                                 self.env.code_size
+#                                 * (data_rate * hop_distance + self.env.i2i_data_rate)
+#                             )
+#                         )
+
+#                         # compute the collected segments
+#                         collected[2] = v2i_pc5_transfered_segment
+
+#                         # accumulate the cost
+#                         costs[2] += (
+#                             v2i_pc5_transfered_segment
+#                             * self.env.code_size
+#                             * (self.env.i2i_cost + self.env.v2i_pc5_cost)
+#                         )
+
+#                     # if there is no neighbor edge that has the requested item, use backhaul link
+#                     else:
+#                         v2i_pc5_transfered_segment = np.floor(
+#                             self.env.dt
+#                             * self.env.i2n_data_rate
+#                             * data_rate
+#                             / (
+#                                 self.env.code_size
+#                                 * (data_rate + self.env.i2n_data_rate)
+#                             )
+#                         )
+
+#                         # compute the collected segments
+#                         collected[2] = v2i_pc5_transfered_segment
+
+#                         # accumulate the cost: i2n + v2i_pc5
+#                         costs[2] += (
+#                             v2i_pc5_transfered_segment
+#                             * self.env.code_size
+#                             * (self.env.i2n_cost + self.env.v2i_pc5_cost)
+#                         )
+
+#             # download with v2i wifi and vehicle is not out of the road
+#             if masks_np[vehicle_index, 3, 1] == 0 and self.env.out[vehicle_index] == 0:
+#                 # check if the vehicle is within the coverage of the edge wifi
+#                 distance = self.env.local_edge_distance[vehicle_index]
+
+#                 if distance < self.env.v2i_wifi_coverage:
+#                     # compute v2i wifi data rate with micro path loss model
+#                     data_rate = compute_data_rate(
+#                         allocated_spectrum=self.env.v2i_wifi_bandwidth,
+#                         transmission_power=self.env.v2i_wifi_transmission_power,
+#                         noise_power=self.env.noise_power,
+#                         distance=distance,
+#                         path_loss_model="micro",
+#                     )
+
+#                     # check if the edge has the requested item
+#                     if (
+#                         self.env.cache[
+#                             int(self.env.local_of[vehicle_index]), requested_item
+#                         ]
+#                         == 1
+#                     ):
+#                         # compute the number of segments that can be transfered directly from the local edge
+#                         v2i_wifi_transfered_segment = np.floor(
+#                             data_rate * self.env.dt / self.env.code_size
+#                         )
+
+#                         # compute the collected segments
+#                         collected[3] = v2i_wifi_transfered_segment
+
+#                         # accumulate the cost
+#                         costs[3] = (
+#                             self.env.v2i_wifi_cost
+#                             * v2i_wifi_transfered_segment
+#                             * self.env.code_size
+#                         )
+#                     # if the edge does not have the requested item
+#                     else:
+#                         # check for the nearest neighbor edge (by hop count) that has the requested item
+#                         hop_distance = 99
+#                         for edge_index in range(self.env.num_edges):
+#                             if self.env.cache[
+#                                 edge_index, requested_item
+#                             ] == 1 and edge_index != int(
+#                                 self.env.local_of[vehicle_index]
+#                             ):
+#                                 hop_distance = min(
+#                                     hop_distance,
+#                                     abs(
+#                                         edge_index
+#                                         - int(self.env.local_of[vehicle_index])
+#                                     ),
+#                                 )
+
+#                         # if there is a neighbor edge that has the requested item
+#                         if hop_distance < 99 and not self.env.remove_edge_cooperation:
+#                             v2i_wifi_transfered_segment = np.floor(
+#                                 self.env.dt
+#                                 * self.env.i2i_data_rate
+#                                 * data_rate
+#                                 / (
+#                                     self.env.code_size
+#                                     * (
+#                                         data_rate
+#                                         + self.env.i2i_data_rate * hop_distance
+#                                     )
+#                                 )
+#                             )
+
+#                             # compute the collected segments
+#                             collected[3] = v2i_wifi_transfered_segment
+
+#                             # accumulate the cost
+#                             costs[3] = (
+#                                 v2i_wifi_transfered_segment
+#                                 * self.env.code_size
+#                                 * (self.env.i2i_cost + self.env.v2i_wifi_cost)
+#                             )
+
+#                         # if there is no neighbor edge that has the requested item, use backhaul link
+#                         else:
+#                             v2i_wifi_transfered_segment = np.floor(
+#                                 self.env.dt
+#                                 * self.env.i2n_data_rate
+#                                 * data_rate
+#                                 / (
+#                                     self.env.code_size
+#                                     * (data_rate + self.env.i2n_data_rate)
+#                                 )
+#                             )
+#                             # compute the collected segments
+#                             collected[3] = v2i_wifi_transfered_segment
+
+#                             # accumulate the cost
+#                             costs[3] = (
+#                                 self.env.i2n_cost
+#                                 * v2i_wifi_transfered_segment
+#                                 * self.env.code_size
+#                                 + self.env.v2i_wifi_cost
+#                                 * v2i_wifi_transfered_segment
+#                                 * self.env.code_size
+#                             )
+#             temp_actions = np.zeros((self.num_rats,), dtype=np.int64)
+
+#             # sort link by cost, enable link until collectd segments > required segments per time step
+#             sorted_link_indices = np.argsort(costs)
+#             accumulated_collected_segments = 0.0
+#             for link_index in sorted_link_indices:
+#                 if costs[link_index] == np.inf:
+#                     continue
+#                 accumulated_collected_segments += collected[link_index]
+#                 temp_actions[link_index] = 1
+#                 if (
+#                     accumulated_collected_segments
+#                     >= required_segments_per_time_step[vehicle_index]
+#                 ):
+#                     break
+
+#             actions[vehicle_index] = temp_actions
+
+#         actions = torch.tensor(actions, dtype=torch.long)
+#         log_probs = torch.zeros_like(actions, dtype=torch.float32)
+
+#         if projection is not None:
+#             actions = projection(actions)
+
+#         return actions, log_probs
+
+#     def store_transition(self, *args, **kwargs):
+#         return super().store_transition(*args, **kwargs)
+
+#     def train(self, *args, **kwargs):
+#         return super().train(*args, **kwargs)
+
+#     def model(self, *args, **kwargs):
+#         return super().model(*args, **kwargs)

@@ -121,7 +121,17 @@ def parse_args():
         "--delivery_policy",
         type=str,
         default="mappo",
-        choices=["greedy", "random", "all", "mappo", "selective", "drl_selective"],
+        choices=[
+            "greedy",
+            "random",
+            "all",
+            "mappo",
+            "selective",
+            "drl_selective",
+            "true_all_link",
+            "cheapselect",
+            "ga",
+        ],
     )
     parser.add_argument(
         "--vehicle_selection_policy",

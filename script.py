@@ -28,7 +28,7 @@ def get_candidate(code):
 
 def v_scaling():
     cache, delivery = get_candidate(opts.code)
-    num_vehicles_list = [10, 20, 30, 40, 50]
+    num_vehicles_list = [15, 25, 35, 45]
     for num_vehicles in num_vehicles_list:
         cmd = f"python run.py --num_vehicles {num_vehicles} --name vehicle_scale_{num_vehicles}-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}"
         os.system(cmd)
@@ -46,6 +46,9 @@ def l_removal():
         "python run.py --remove_pc5 --name no_pc5-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),
+        "python run.py --remove_pc5 --remove_wifi --remove_v2v --name onlybs-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+            cache=cache, delivery=delivery
+        ),
     ]
     for cmd in cmds:
         os.system(cmd)
@@ -54,16 +57,19 @@ def l_removal():
 def deadline():
     cache, delivery = get_candidate(opts.code)
     cmds = [
-        "python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150-{cache}-{delivery} --cost_weight 0.3 --delay_weight 0.7 --cache_policy {cache} --delivery_policy {delivery}".format(
+        # "python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+        #     cache=cache, delivery=delivery
+        # ),
+        "python run.py --delivery_deadline_min 40 --delivery_deadline_max 120 --name dl40-120-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),
-        "python run.py --delivery_deadline_min 25 --delivery_deadline_max 75 --name dl25-75-{cache}-{delivery} --cost_weight 0.3 --delay_weight 0.7 --cache_policy {cache} --delivery_policy {delivery}".format(
+        "python run.py --delivery_deadline_min 30 --delivery_deadline_max 90 --name dl30-90-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),
-        "python run.py --delivery_deadline_min 10 --delivery_deadline_max 20 --name dl10-20-{cache}-{delivery} --cost_weight 0.3 --delay_weight 0.7 --cache_policy {cache} --delivery_policy {delivery}".format(
+        "python run.py --delivery_deadline_min 20 --delivery_deadline_max 60 --name dl20-60-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),
-        "python run.py --delivery_deadline_min 10 --delivery_deadline_max 11 --name dl10-11-{cache}-{delivery} --cost_weight 0.3 --delay_weight 0.7 --cache_policy {cache} --delivery_policy {delivery}".format(
+        "python run.py --delivery_deadline_min 10 --delivery_deadline_max 30 --name dl10-30-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),
     ]
@@ -74,10 +80,22 @@ def deadline():
 def item_size():
     cache, delivery = get_candidate(opts.code)
     cmds = [
-        "python run.py --item_size_min 100 --item_size_max 200 --name is100-200-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+        # "python run.py --item_size_min 100 --item_size_max 150 --name is100-150-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+        #     cache=cache, delivery=delivery
+        # ),
+        "python run.py --item_size_min 150 --item_size_max 200 --name is150-200-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),
-        "python run.py --item_size_min 200 --item_size_max 400 --name is200-400-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+        "python run.py --item_size_min 200 --item_size_max 250 --name is200-250-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+            cache=cache, delivery=delivery
+        ),
+        "python run.py --item_size_min 250 --item_size_max 300 --name is250-300-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+            cache=cache, delivery=delivery
+        ),
+        "python run.py --item_size_min 300 --item_size_max 350 --name is300-350-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+            cache=cache, delivery=delivery
+        ),
+        "python run.py --item_size_min 350 --item_size_max 400 --name is350-400-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),
     ]
