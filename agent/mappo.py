@@ -72,25 +72,17 @@ class MAPPO:
         self.global_step = 0
 
     def act(self, states, masks, projection=None):
-        actions = []
-        log_probs = []
-        dists = []
+        # Batch actor inference across agents for speed.
+        states = torch.stack([state.to(self.device) for state in states], dim=0)
+        masks = torch.stack([mask.to(self.device) for mask in masks], dim=0)
 
-        for i in range(self.num_agents):
-            # send to device
-            state = states[i].to(self.device)
-            mask = masks[i].to(self.device)
+        # get the raw logits from the actor
+        logit = self.actor(states, masks)
+        if logit.dim() == 4 and logit.size(0) == 1:
+            logit = logit.squeeze(0)
 
-            # get the raw logits from the actor
-            logit = self.actor(state, mask).squeeze(0)  # 1 x num_actions x action_dim
-
-            # save dist
-            dists.append(torch.distributions.Categorical(logits=logit))
-
-            # save sampled action
-            actions.append(dists[i].sample())
-
-        actions = torch.stack(actions, dim=0).detach()  # num_agents x num_actions
+        dist = torch.distributions.Categorical(logits=logit)
+        actions = dist.sample().detach()  # num_agents x num_actions
 
         if projection is not None:
             valid_actions = projection(actions)
@@ -98,10 +90,7 @@ class MAPPO:
             valid_actions = actions
 
         # calculate log probs
-        for i in range(self.num_agents):
-            log_probs.append(dists[i].log_prob(valid_actions[i]))
-
-        log_probs = torch.stack(log_probs, dim=0).detach()  # num_agents x num_actions
+        log_probs = dist.log_prob(valid_actions).detach()  # num_agents x num_actions
         return valid_actions, log_probs
 
     def evaluate(self, state, mask, action):
