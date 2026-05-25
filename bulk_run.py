@@ -1,6 +1,6 @@
 import os
 
-code = "1"
+code = "0"
 
 for c in code:
     os.system(f"python script.py --code {c} --v_scaling")

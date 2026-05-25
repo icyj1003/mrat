@@ -203,6 +203,7 @@ class Environment:
         self.utility_track = []
         self.hit_ratio_track = []
         self.rewards_track = []
+        self.load_ratios_track = []
         self.reset_mobility()
         self.reset_request()
         self.set_states()
@@ -314,6 +315,9 @@ class Environment:
         if device.type == "cuda":
             actions = actions.cpu()
 
+        v2i_pc5_load_ratio = torch.zeros(self.num_edges)
+        v2i_wifi_load_ratio = torch.zeros(self.num_edges)
+
         # check the shape of the actions
         joined = False
         if len(actions.shape) == 2:  # current shape is num_vehicles x num_rats
@@ -325,9 +329,10 @@ class Environment:
             joined = True
 
         # compute the v2v action overload
-        v2v_overload = max(
-            0, torch.sum(actions[:, 1]) - self.v2v_bandwidth_max / self.v2v_bandwidth
-        )
+        max_v2v_actions = self.v2v_bandwidth_max / self.v2v_bandwidth
+        current_v2v_actions = torch.sum(actions[:, 1])
+        v2v_load_ratio = current_v2v_actions / max_v2v_actions
+        v2v_overload = max(0, current_v2v_actions - max_v2v_actions)
 
         # drop v2v action of low priority vehicles
         if v2v_overload > 0:
@@ -351,6 +356,10 @@ class Environment:
             pc5_index = torch.where(
                 (actions[:, 2] == 1) & (self.local_of == edge_index)
             )[0]
+            v2i_pc5_load_ratio[edge_index] = torch.sum(actions[pc5_index, 2]) / (
+                self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth
+            )
+
             v2i_pc5_overload = (
                 torch.clamp(
                     torch.sum(actions[pc5_index, 2])
@@ -377,6 +386,9 @@ class Environment:
             wifi_index = torch.where(
                 (actions[:, 3] == 1) & (self.local_of == edge_index)
             )[0]
+            v2i_wifi_load_ratio[edge_index] = torch.sum(actions[wifi_index, 3]) / (
+                self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth
+            )
             v2i_wifi_overload = (
                 torch.clamp(
                     torch.sum(actions[wifi_index, 3])
@@ -401,6 +413,19 @@ class Environment:
         # bring action back to the original shape
         if joined:
             actions = actions.view(-1)
+
+        v2n_load_ratio = torch.sum(actions[:, 0]) / (
+            self.v2n_bandwidth_max / self.v2n_bandwidth
+        )
+
+        self.load_ratios_track.append(
+            {
+                "v2n": v2n_load_ratio,
+                "v2v": v2v_load_ratio,
+                "v2i_pc5": v2i_pc5_load_ratio,
+                "v2i_wifi": v2i_wifi_load_ratio,
+            }
+        )
 
         return actions.to(device)
 

@@ -28,7 +28,7 @@ def get_candidate(code):
 
 def v_scaling():
     cache, delivery = get_candidate(opts.code)
-    num_vehicles_list = [15, 25, 35, 45]
+    num_vehicles_list = [100, 90, 80, 70, 60]
     for num_vehicles in num_vehicles_list:
         cmd = f"python run.py --num_vehicles {num_vehicles} --name vehicle_scale_{num_vehicles}-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}"
         os.system(cmd)
@@ -37,15 +37,15 @@ def v_scaling():
 def l_removal():
     cache, delivery = get_candidate(opts.code)
     cmds = [
-        "python run.py --remove_v2v --name no_v2v-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
-            cache=cache, delivery=delivery
-        ),
-        "python run.py --remove_wifi --name no_wifi-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
-            cache=cache, delivery=delivery
-        ),
-        "python run.py --remove_pc5 --name no_pc5-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
-            cache=cache, delivery=delivery
-        ),
+        # "python run.py --remove_v2v --name no_v2v-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+        #     cache=cache, delivery=delivery
+        # ),
+        # "python run.py --remove_wifi --name no_wifi-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+        #     cache=cache, delivery=delivery
+        # ),
+        # "python run.py --remove_pc5 --name no_pc5-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
+        #     cache=cache, delivery=delivery
+        # ),
         "python run.py --remove_pc5 --remove_wifi --remove_v2v --name onlybs-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
             cache=cache, delivery=delivery
         ),

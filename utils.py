@@ -30,6 +30,9 @@ def log_and_collect(writer, env, episode):
         np.mean(env.delay - env.delivery_deadline[env.requested]), 0, None
     )
 
+    # violation ratio
+    violation_ratio = np.mean(env.delay > env.delivery_deadline[env.requested])
+
     # v2v hit-ratio
     hit_rate = env.compute_hit_ratio()
 
@@ -101,6 +104,8 @@ def log_and_collect(writer, env, episode):
         "v2i_pc5_u": v2i_pc5_u,
         "v2i_hit_rate": hit_rate,
         "mean_deadline_violation": mean_deadline_violation,
+        "violation_ratio": violation_ratio,
+        "load_ratio": env.load_ratios_track,
         "episode": episode,
     }
 
