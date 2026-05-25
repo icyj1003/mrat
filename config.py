@@ -89,6 +89,7 @@ def parse_args():
     # python run.py --item_size_min 200 --item_size_max 400 --name is200-400
 
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--cuda", action="store_true", help="Run models on CUDA")
     parser.add_argument("--dt", type=int, default=1, help="Time step size")
     parser.add_argument("--cost_weight", type=float, default=0.5, help="Cost weight")
     parser.add_argument("--delay_weight", type=float, default=0.5, help="Delay weight")

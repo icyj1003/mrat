@@ -85,13 +85,13 @@ class MAPPO:
         actions = dist.sample().detach()  # num_agents x num_actions
 
         if projection is not None:
-            valid_actions = projection(actions)
+            valid_actions = projection(actions.detach().cpu()).to(self.device)
         else:
             valid_actions = actions
 
         # calculate log probs
         log_probs = dist.log_prob(valid_actions).detach()  # num_agents x num_actions
-        return valid_actions, log_probs
+        return valid_actions.cpu(), log_probs.cpu()
 
     def evaluate(self, state, mask, action):
         state = state.to(self.device)

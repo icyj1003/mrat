@@ -28,8 +28,15 @@ if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
 
+    if args.cuda and not torch.cuda.is_available():
+        print("CUDA was requested but is not available. Falling back to CPU.")
+
+    args.device = torch.device("cuda" if args.cuda and torch.cuda.is_available() else "cpu")
+
     # set random seed
     torch.manual_seed(args.seed)
+    if args.device.type == "cuda":
+        torch.cuda.manual_seed_all(args.seed)
 
     # Setup logger
     current, writer = get_logger(args)
@@ -146,8 +153,8 @@ if __name__ == "__main__":
         # Run the multi-agent delivery policy here
         while not env.is_small_done():
             # Convert to tensor
-            state_tensor = torch.tensor(env.states, dtype=torch.float32)
-            mask_tensor = torch.tensor(env.masks, dtype=torch.float32)
+            state_tensor = torch.tensor(env.states, dtype=torch.float32, device=args.device)
+            mask_tensor = torch.tensor(env.masks, dtype=torch.float32, device=args.device)
 
             # MAPPO Policy action selection
             actions, log_probs = delivery_model.act(
@@ -163,10 +170,18 @@ if __name__ == "__main__":
             next_states, rewards, dones, violations = env.small_step(reshaped_actions)
 
             # Convert to tensor
-            reward_tensor = torch.tensor(rewards, dtype=torch.float32).view(-1, 1)
-            done_tensor = torch.tensor(dones, dtype=torch.float32).view(-1, 1)
-            violation_tensor = torch.tensor(violations, dtype=torch.float32).view(-1, 1)
-            next_state_tensor = torch.tensor(next_states, dtype=torch.float32)
+            reward_tensor = torch.tensor(
+                rewards, dtype=torch.float32, device=args.device
+            ).view(-1, 1)
+            done_tensor = torch.tensor(
+                dones, dtype=torch.float32, device=args.device
+            ).view(-1, 1)
+            violation_tensor = torch.tensor(
+                violations, dtype=torch.float32, device=args.device
+            ).view(-1, 1)
+            next_state_tensor = torch.tensor(
+                next_states, dtype=torch.float32, device=args.device
+            )
 
             # Store the transition in the delivery model
             delivery_model.store_transition(

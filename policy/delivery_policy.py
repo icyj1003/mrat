@@ -87,7 +87,7 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
             penalty_coeff=args.penalty_coeff,
             mini_batch_size=args.mini_batch_size,
             max_grad_norm=args.max_grad_norm,
-            device="cpu",
+            device=args.device,
             writer=writer,
         )
 
@@ -149,7 +149,7 @@ class RATSelection(DeliveryPolicy):
             penalty_coeff=args.penalty_coeff,
             mini_batch_size=args.mini_batch_size,
             max_grad_norm=args.max_grad_norm,
-            device="cpu",
+            device=args.device,
             writer=writer,
         )
 
