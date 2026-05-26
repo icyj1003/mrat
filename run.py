@@ -31,7 +31,9 @@ if __name__ == "__main__":
     if args.cuda and not torch.cuda.is_available():
         print("CUDA was requested but is not available. Falling back to CPU.")
 
-    args.device = torch.device("cuda" if args.cuda and torch.cuda.is_available() else "cpu")
+    args.device = torch.device(
+        "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
+    )
 
     # set random seed
     torch.manual_seed(args.seed)
@@ -95,6 +97,7 @@ if __name__ == "__main__":
 
     # evaluation metrics tracking
     infos = []
+    workload = {}
 
     # Begin training loop
     for episode in tqdm(range(total_episodes), desc="Running", unit="episode"):
@@ -153,8 +156,12 @@ if __name__ == "__main__":
         # Run the multi-agent delivery policy here
         while not env.is_small_done():
             # Convert to tensor
-            state_tensor = torch.tensor(env.states, dtype=torch.float32, device=args.device)
-            mask_tensor = torch.tensor(env.masks, dtype=torch.float32, device=args.device)
+            state_tensor = torch.tensor(
+                env.states, dtype=torch.float32, device=args.device
+            )
+            mask_tensor = torch.tensor(
+                env.masks, dtype=torch.float32, device=args.device
+            )
 
             # MAPPO Policy action selection
             actions, log_probs = delivery_model.act(
@@ -203,6 +210,9 @@ if __name__ == "__main__":
             ):
                 delivery_model.train()
 
+        # uopdate workload
+        workload.update({episode: env.load_ratios_track})
+
         # Collect episode information
         infos.append(
             log_and_collect(
@@ -222,6 +232,7 @@ if __name__ == "__main__":
     evaluate["num_edges"] = args.num_edges
     evaluate["num_items"] = args.num_items
     evaluate["name"] = args.name
+    evaluate["workload"] = workload
 
     # Save the model and metrics
     torch.save(

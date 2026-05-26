@@ -105,7 +105,6 @@ def log_and_collect(writer, env, episode):
         "v2i_hit_rate": hit_rate,
         "mean_deadline_violation": mean_deadline_violation,
         "violation_ratio": violation_ratio,
-        "load_ratio": env.load_ratios_track,
         "episode": episode,
     }
 

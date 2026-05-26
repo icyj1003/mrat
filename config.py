@@ -146,6 +146,38 @@ def parse_args():
         action="store_true",
         help="Remove edge cooperation for caching decisions",
     )
+    # v2n_bandwidth_max: float = 100000000,
+    # v2n_bandwidth: float = 1 * 1000000,
+    # v2v_bandwidth_max: float = 100000000,
+    # v2v_bandwidth: float = 1000000,
+    # v2i_pc5_bandwidth_max: float = 20000000,
+    # v2i_pc5_bandwidth: float = 1000000,
+    # v2i_wifi_bandwidth_max: float = 80000000,
+    # v2i_wifi_bandwidth: float = 5000000,
+    parser.add_argument(
+        "--v2n_bandwidth_max",
+        type=float,
+        default=1e8,
+        help="Maximum bandwidth for V2N communication",
+    )
+    parser.add_argument(
+        "--v2v_bandwidth_max",
+        type=float,
+        default=1e8,
+        help="Maximum bandwidth for V2V communication",
+    )
+    parser.add_argument(
+        "--v2i_pc5_bandwidth_max",
+        type=float,
+        default=2e7,
+        help="Maximum bandwidth for V2I PC5 communication",
+    )
+    parser.add_argument(
+        "--v2i_wifi_bandwidth_max",
+        type=float,
+        default=8e7,
+        help="Maximum bandwidth for V2I WiFi communication",
+    )
     return parser.parse_args()
 
 

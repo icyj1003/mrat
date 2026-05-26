@@ -127,6 +127,21 @@ def cache_policy():
         os.system(cmd)
 
 
+def workload():
+    v2n_bandwidth_max = [1e8, 5e7, 25e6]
+    v2v_bandwidth_max = [1e8, 5e7, 25e6]
+    v2i_pc5_bandwidth_max = [2e7, 1e6, 5e6]
+    v2i_wifi_bandwidth_max = [8e7, 4e7, 2e7]
+    cmds = []
+    cache, delivery = get_candidate(opts.code)
+    for i in range(len(v2n_bandwidth_max)):
+        cmd = f"python run.py --v2n_bandwidth_max {v2n_bandwidth_max[i]} --v2v_bandwidth_max {v2v_bandwidth_max[i]} --v2i_pc5_bandwidth_max {v2i_pc5_bandwidth_max[i]} --v2i_wifi_bandwidth_max {v2i_wifi_bandwidth_max[i]} --name workload_{i}_{cache}_{delivery}{cuda_flag()}"
+        cmds.append(cmd)
+
+    for cmd in cmds:
+        os.system(cmd)
+
+
 args = ArgumentParser()
 args.add_argument(
     "--v_scaling", action="store_true", help="Run vehicle scaling experiments"
@@ -150,6 +165,8 @@ args.add_argument(
     default="0",
 )
 
+args.add_argument("--workload", action="store_true", help="Run workload experiments")
+
 args.add_argument("--cuda", action="store_true", help="Run models on CUDA")
 opts = args.parse_args()
 
@@ -167,3 +184,6 @@ if opts.deadline:
 
 if opts.item_size:
     item_size()
+
+if opts.workload:
+    workload()
