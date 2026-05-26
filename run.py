@@ -232,7 +232,6 @@ if __name__ == "__main__":
     evaluate["num_edges"] = args.num_edges
     evaluate["num_items"] = args.num_items
     evaluate["name"] = args.name
-    evaluate["workload"] = workload
 
     # Save the model and metrics
     torch.save(
@@ -241,6 +240,7 @@ if __name__ == "__main__":
             "delivery_model": delivery_model.model(),
             "evaluate": evaluate,
             "infos": infos,
+            "workload": workload,
         },
         f"runs/{current}_{args.name}/model.pth",  # Save the model with the current time and name
     )
