@@ -50,7 +50,10 @@ def l_removal():
         # "python run.py --remove_pc5 --name no_pc5-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
         #     cache=cache, delivery=delivery
         # ),
-        "python run.py --remove_pc5 --remove_wifi --remove_v2v --name onlybs-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        # "python run.py --remove_pc5 --remove_wifi --remove_v2v --name onlybs-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        "python run.py --remove_edge_cooperation --name no_edge_cooperation-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
     ]
@@ -64,16 +67,22 @@ def deadline():
         # "python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
         #     cache=cache, delivery=delivery
         # ),
-        "python run.py --delivery_deadline_min 40 --delivery_deadline_max 120 --name dl40-120-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        # "python run.py --delivery_deadline_min 40 --delivery_deadline_max 120 --name dl40-120-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        # "python run.py --delivery_deadline_min 30 --delivery_deadline_max 90 --name dl30-90-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        # "python run.py --delivery_deadline_min 20 --delivery_deadline_max 60 --name dl20-60-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        # "python run.py --delivery_deadline_min 10 --delivery_deadline_max 30 --name dl10-30-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        "python run.py --delivery_deadline_min 20 --delivery_deadline_max 40 --name dl20-40-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
-        "python run.py --delivery_deadline_min 30 --delivery_deadline_max 90 --name dl30-90-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-            cache=cache, delivery=delivery, cuda=cuda_flag()
-        ),
-        "python run.py --delivery_deadline_min 20 --delivery_deadline_max 60 --name dl20-60-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-            cache=cache, delivery=delivery, cuda=cuda_flag()
-        ),
-        "python run.py --delivery_deadline_min 10 --delivery_deadline_max 30 --name dl10-30-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        "python run.py --delivery_deadline_min 10 --delivery_deadline_max 20 --name dl10-20-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
     ]
@@ -87,19 +96,25 @@ def item_size():
         # "python run.py --item_size_min 100 --item_size_max 150 --name is100-150-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
         #     cache=cache, delivery=delivery
         # ),
-        "python run.py --item_size_min 150 --item_size_max 200 --name is150-200-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        # "python run.py --item_size_min 150 --item_size_max 200 --name is150-200-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        # "python run.py --item_size_min 200 --item_size_max 250 --name is200-250-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        # "python run.py --item_size_min 250 --item_size_max 300 --name is250-300-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        # "python run.py --item_size_min 300 --item_size_max 350 --name is300-350-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        # "python run.py --item_size_min 350 --item_size_max 400 --name is350-400-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        "python run.py --item_size_min 100 --item_size_max 300 --name is100-300-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
-        "python run.py --item_size_min 200 --item_size_max 250 --name is200-250-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-            cache=cache, delivery=delivery, cuda=cuda_flag()
-        ),
-        "python run.py --item_size_min 250 --item_size_max 300 --name is250-300-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-            cache=cache, delivery=delivery, cuda=cuda_flag()
-        ),
-        "python run.py --item_size_min 300 --item_size_max 350 --name is300-350-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-            cache=cache, delivery=delivery, cuda=cuda_flag()
-        ),
-        "python run.py --item_size_min 350 --item_size_max 400 --name is350-400-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        "python run.py --item_size_min 150 --item_size_max 450 --name is150-450-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
     ]
@@ -128,10 +143,10 @@ def cache_policy():
 
 
 def workload():
-    v2n_bandwidth_max = [1e8, 5e7, 25e6]
-    v2v_bandwidth_max = [1e8, 5e7, 25e6]
-    v2i_pc5_bandwidth_max = [2e7, 1e6, 5e6]
-    v2i_wifi_bandwidth_max = [8e7, 4e7, 2e7]
+    v2n_bandwidth_max = [5e7, 25e6]
+    v2v_bandwidth_max = [5e7, 25e6]
+    v2i_pc5_bandwidth_max = [1e6, 5e6]
+    v2i_wifi_bandwidth_max = [4e7, 2e7]
     cmds = []
     cache, delivery = get_candidate(opts.code)
     for i in range(len(v2n_bandwidth_max)):

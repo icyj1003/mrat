@@ -66,7 +66,7 @@ def parse_args():
     parser.add_argument(
         "--delivery_deadline_min",
         type=int,
-        default=100,
+        default=30,
         help="Minimum delivery deadline",
     )
     # python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150
@@ -75,7 +75,7 @@ def parse_args():
     parser.add_argument(
         "--delivery_deadline_max",
         type=int,
-        default=300,
+        default=60,
         help="Maximum delivery deadline",
     )
     parser.add_argument(
@@ -127,7 +127,6 @@ def parse_args():
             "random",
             "all",
             "mappo",
-            "selective",
             "drl_selective",
             "true_all_link",
             "cheapselect",
