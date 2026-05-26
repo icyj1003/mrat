@@ -85,6 +85,9 @@ def deadline():
         "python run.py --delivery_deadline_min 10 --delivery_deadline_max 20 --name dl10-20-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
+        "python run.py --delivery_deadline_min 5 --delivery_deadline_max 10 --name dl5-10-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+            cache=cache, delivery=delivery, cuda=cuda_flag()
+        ),
     ]
     for cmd in cmds:
         os.system(cmd)
