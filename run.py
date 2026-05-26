@@ -222,6 +222,8 @@ if __name__ == "__main__":
             )
         )
         infos[-1]["num_caching_vehicles"] = len(caching_vehicle)
+        print(infos[-1]["episode_length"])
+        print(infos[-1]["violation_ratio"])
 
         # Reset the environment
         env.reset()

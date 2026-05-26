@@ -226,7 +226,7 @@ class MAPPO:
             shuffle=True,
         )
 
-        for _ in trange(self.num_epochs, desc="Epochs"):
+        for _ in trange(self.num_epochs, desc="Epochs", leave=False):
             avg_actor_loss, avg_entropy_loss, avg_critic_loss = (
                 0.0,
                 0.0,
