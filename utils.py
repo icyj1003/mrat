@@ -127,6 +127,10 @@ def get_environment(args):
         disable_wifi=args.remove_wifi,
         disable_pc5=args.remove_pc5,
         remove_edge_cooperation=args.remove_edge_cooperation,
+        v2n_bandwidth_max=args.v2n_bandwidth_max,
+        v2v_bandwidth_max=args.v2v_bandwidth_max,
+        v2i_pc5_bandwidth_max=args.v2i_pc5_bandwidth_max,
+        v2i_wifi_bandwidth_max=args.v2i_wifi_bandwidth_max,
     )
 
     # Reset the environment
