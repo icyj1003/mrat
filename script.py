@@ -155,7 +155,7 @@ def workload():
     v2i_wifi_bandwidth_max = [4e7, 2e7, 1e7]
     cmds = []
     cache, delivery = get_candidate(opts.code)
-    for i in range(len(v2n_bandwidth_max)):
+    for i in range(1, len(v2n_bandwidth_max)):
         cmd = f"python run.py --v2n_bandwidth_max {v2n_bandwidth_max[i]} --v2v_bandwidth_max {v2v_bandwidth_max[i]} --v2i_pc5_bandwidth_max {v2i_pc5_bandwidth_max[i]} --v2i_wifi_bandwidth_max {v2i_wifi_bandwidth_max[i]} --name workload_{i}_{cache}_{delivery}{cuda_flag()}"
         cmds.append(cmd)
 
