@@ -410,13 +410,33 @@ class Environment:
                     v2i_wifi_overload -= 1
                     priorities = priorities[1:]
 
-        # bring action back to the original shape
-        if joined:
-            actions = actions.view(-1)
+        # v2n overload handling (drop v2n action if overloaded since it's the least preferred RAT)
+        max_v2n_actions = self.v2n_bandwidth_max / self.v2n_bandwidth
+        current_v2n_actions = torch.sum(actions[:, 0])
+        v2n_load_ratio = current_v2n_actions / max_v2n_actions
+        v2n_overload = max(0, current_v2n_actions - max_v2n_actions)
+        if v2n_overload > 0:
+            v2n_index = torch.where(actions[:, 0] == 1)[0]
+            priorities = torch.argsort(
+                torch.tensor(
+                    self.remaining_deadline[v2n_index]
+                    / self.remaining_segments[v2n_index]
+                ),
+                dim=0,
+            ).squeeze()
+
+            while v2n_overload > 0 and priorities.numel() > 0:
+                actions[priorities[0], 0] = 0
+                v2n_overload -= 1
+                priorities = priorities[1:]
 
         v2n_load_ratio = torch.sum(actions[:, 0]) / (
             self.v2n_bandwidth_max / self.v2n_bandwidth
         )
+
+        # bring action back to the original shape
+        if joined:
+            actions = actions.view(-1)
 
         self.load_ratios_track.append(
             {

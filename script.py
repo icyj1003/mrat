@@ -149,10 +149,10 @@ def cache_policy():
 
 
 def workload():
-    v2n_bandwidth_max = [5e7, 25e6]
-    v2v_bandwidth_max = [5e7, 25e6]
-    v2i_pc5_bandwidth_max = [1e6, 5e6]
-    v2i_wifi_bandwidth_max = [4e7, 2e7]
+    v2n_bandwidth_max = [5e7, 25e6, 10e6]
+    v2v_bandwidth_max = [5e7, 25e6, 10e6]
+    v2i_pc5_bandwidth_max = [1e6, 5e6, 2e6]
+    v2i_wifi_bandwidth_max = [4e7, 2e7, 1e7]
     cmds = []
     cache, delivery = get_candidate(opts.code)
     for i in range(len(v2n_bandwidth_max)):
