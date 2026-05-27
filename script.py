@@ -117,13 +117,13 @@ def item_size():
         "python run.py --item_size_min 25 --item_size_max 50 --name is25-50-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
-    #     "python run.py --item_size_min 100 --item_size_max 300 --name is100-300-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-    #         cache=cache, delivery=delivery, cuda=cuda_flag()
-    #     ),
-    #     "python run.py --item_size_min 200 --item_size_max 600 --name is200-600-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-    #         cache=cache, delivery=delivery, cuda=cuda_flag()
-    #     ),
-    # ]
+        #     "python run.py --item_size_min 100 --item_size_max 300 --name is100-300-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #         cache=cache, delivery=delivery, cuda=cuda_flag()
+        #     ),
+        #     "python run.py --item_size_min 200 --item_size_max 600 --name is200-600-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #         cache=cache, delivery=delivery, cuda=cuda_flag()
+        #     ),
+    ]
     for cmd in cmds:
         os.system(cmd)
 
