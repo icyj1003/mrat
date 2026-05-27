@@ -208,9 +208,10 @@ if __name__ == "__main__":
                 and episode > 0
                 and delivery_model.steps % args.small_train_per_n_steps == 0
             ):
-                delivery_model.train()
+                if episode < args.training_episodes:
+                    delivery_model.train()
 
-        # uopdate workload
+        # update workload
         workload.update({episode: env.load_ratios_track})
 
         # Collect episode information
