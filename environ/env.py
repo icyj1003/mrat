@@ -208,12 +208,17 @@ class Environment:
         self.reset_request()
         self.set_states()
 
-    def large_step(self, actions, caching_vehicles_indices) -> None:
+    def large_step(
+        self, actions, caching_vehicles_indices, vehicle_actions=None
+    ) -> None:
         # Update the cache with the provided actions
         self.cache[: self.num_edges, :] = actions
 
-        # Update the cache vehicles according to the corresponding edge indices
-        self.update_vehicle_cache(caching_vehicles_indices)
+        # Update the vehicle cache either from explicit actions or the edge cache
+        if vehicle_actions is not None:
+            self.cache[self.num_edges :, :] = vehicle_actions
+        else:
+            self.update_vehicle_cache(caching_vehicles_indices)
 
         # Update the delivery status of vehicles
         self.set_states()
@@ -328,124 +333,143 @@ class Environment:
             actions = actions.view(self.num_vehicles, self.num_rats)
             joined = True
 
-        # compute the v2v action overload
-        max_v2v_actions = self.v2v_bandwidth_max / self.v2v_bandwidth
-        current_v2v_actions = torch.sum(actions[:, 1])
-        v2v_load_ratio = current_v2v_actions / max_v2v_actions
-        v2v_overload = max(0, current_v2v_actions - max_v2v_actions)
+        # bring action to cpu and remember original device
+        device = actions.device
+        if device.type == "cuda":
+            actions = actions.cpu()
 
-        # drop v2v action of low priority vehicles
-        if v2v_overload > 0:
-            v2v_index = torch.where(actions[:, 1] == 1)[0]
-            priorities = torch.argsort(
-                torch.tensor(
-                    self.remaining_deadline[v2v_index]
-                    / self.remaining_segments[v2v_index]
-                ),
-                dim=0,
-            ).squeeze()
+        # ensure actions is 2D: (num_vehicles, num_rats)
+        joined = False
+        if actions.dim() == 1:
+            actions = actions.view(self.num_vehicles, self.num_rats)
+            joined = True
 
-            while v2v_overload > 0 and priorities.numel() > 0:
-                actions[priorities[0], 1] = 0
-                v2v_overload -= 1
-                priorities = priorities[1:]  # delete the first element
-
-        # for each edge, check if the v2i pc5 and wifi actions are overloaded
-        for edge_index in range(self.num_edges):
-            # drop v2i pc5 action of low priority vehicles
-            pc5_index = torch.where(
-                (actions[:, 2] == 1) & (self.local_of == edge_index)
-            )[0]
-            v2i_pc5_load_ratio[edge_index] = torch.sum(actions[pc5_index, 2]) / (
-                self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth
-            )
-
-            v2i_pc5_overload = (
-                torch.clamp(
-                    torch.sum(actions[pc5_index, 2])
-                    - self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth,
-                    min=0,
-                )
-                / self.num_edges
-            )
-            if v2i_pc5_overload > 0:
-                priorities = torch.argsort(
-                    torch.tensor(
-                        self.remaining_deadline[pc5_index]
-                        / self.remaining_segments[pc5_index]
-                    ),
-                    dim=0,
-                ).squeeze()
-
-                while v2i_pc5_overload > 0 and priorities.numel() > 0:
-                    actions[pc5_index[priorities[0]], 2] = 0
-                    v2i_pc5_overload -= 1
-                    priorities = priorities[1:]
-
-            # drop v2i wifi action of low priority vehicles
-            wifi_index = torch.where(
-                (actions[:, 3] == 1) & (self.local_of == edge_index)
-            )[0]
-            v2i_wifi_load_ratio[edge_index] = torch.sum(actions[wifi_index, 3]) / (
-                self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth
-            )
-            v2i_wifi_overload = (
-                torch.clamp(
-                    torch.sum(actions[wifi_index, 3])
-                    - self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth,
-                    min=0,
-                )
-                / self.num_edges
-            )
-            if v2i_wifi_overload > 0:
-                priorities = torch.argsort(
-                    torch.tensor(
-                        self.remaining_deadline[wifi_index]
-                        / self.remaining_segments[wifi_index]
-                    ),
-                    dim=0,
-                ).squeeze()
-                while v2i_wifi_overload > 0 and priorities.numel() > 0:
-                    actions[wifi_index[priorities[0]], 3] = 0
-                    v2i_wifi_overload -= 1
-                    priorities = priorities[1:]
-
-        # v2n overload handling (drop v2n action if overloaded since it's the least preferred RAT)
-        max_v2n_actions = self.v2n_bandwidth_max / self.v2n_bandwidth
-        current_v2n_actions = torch.sum(actions[:, 0])
-        v2n_load_ratio = current_v2n_actions / max_v2n_actions
-        v2n_overload = max(0, current_v2n_actions - max_v2n_actions)
-        if v2n_overload > 0:
-            v2n_index = torch.where(actions[:, 0] == 1)[0]
-            priorities = torch.argsort(
-                torch.tensor(
-                    self.remaining_deadline[v2n_index]
-                    / self.remaining_segments[v2n_index]
-                ),
-                dim=0,
-            ).squeeze()
-
-            while v2n_overload > 0 and priorities.numel() > 0:
-                actions[priorities[0], 0] = 0
-                v2n_overload -= 1
-                priorities = priorities[1:]
-
-        v2n_load_ratio = torch.sum(actions[:, 0]) / (
-            self.v2n_bandwidth_max / self.v2n_bandwidth
+        # convert environment arrays to torch tensors on CPU for safe indexing
+        local_of_t = torch.as_tensor(self.local_of, dtype=torch.long)
+        rem_dead = torch.as_tensor(
+            self.remaining_deadline.reshape(-1), dtype=torch.float
+        )
+        rem_seg = torch.as_tensor(
+            self.remaining_segments.reshape(-1), dtype=torch.float
         )
 
-        # bring action back to the original shape
+        v2i_pc5_load_ratio = torch.zeros(self.num_edges)
+        v2i_wifi_load_ratio = torch.zeros(self.num_edges)
+
+        # --- V2V overload handling ---
+        max_v2v_actions = float(self.v2v_bandwidth_max / self.v2v_bandwidth)
+        current_v2v_actions = torch.sum(actions[:, 1])
+        v2v_load_ratio = current_v2v_actions / max_v2v_actions
+        v2v_overload = torch.clamp(current_v2v_actions - max_v2v_actions, min=0.0)
+
+        if v2v_overload.item() > 0:
+            v2v_index = torch.where(actions[:, 1] == 1)[0]
+            if v2v_index.numel() > 0:
+                scores = rem_dead[v2v_index] / rem_seg[v2v_index]
+                priorities = torch.argsort(scores)
+                to_drop = min(int(v2v_overload.item()), priorities.numel())
+                for i in range(to_drop):
+                    global_idx = v2v_index[priorities[i]]
+                    actions[global_idx, 1] = 0
+
+        # --- V2I (per-edge) overload handling ---
+        for edge_index in range(self.num_edges):
+            # PC5
+            pc5_index = torch.where((actions[:, 2] == 1) & (local_of_t == edge_index))[
+                0
+            ]
+            v2i_pc5_load_ratio[edge_index] = torch.sum(actions[pc5_index, 2]) / (
+                float(self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth)
+            )
+
+            current_pc5_load = torch.sum(actions[pc5_index, 2])
+            max_pc5_load = float(self.v2i_pc5_bandwidth_max / self.v2i_pc5_bandwidth)
+
+            v2i_pc5_overload = torch.clamp(current_pc5_load - max_pc5_load, min=0.0)
+
+            # print(f"Edge {edge_index}: V2I PC5 Overload={v2i_pc5_overload:.2f}")
+
+            if v2i_pc5_overload.item() > 0 and pc5_index.numel() > 0:
+                scores = rem_dead[pc5_index] / rem_seg[pc5_index]
+                priorities = torch.argsort(scores)
+                to_drop = min(int(v2i_pc5_overload.item()), priorities.numel())
+                for i in range(to_drop):
+                    global_idx = pc5_index[priorities[i]]
+                    actions[global_idx, 2] = 0
+
+            # print(
+            #     f"Edge {edge_index}: New V2I PC5 Load={torch.sum(actions[pc5_index, 2]) }"
+            # )
+
+            # WiFi
+            wifi_index = torch.where((actions[:, 3] == 1) & (local_of_t == edge_index))[
+                0
+            ]
+            v2i_wifi_load_ratio[edge_index] = torch.sum(actions[wifi_index, 3]) / (
+                float(self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth)
+            )
+
+            current_wifi_load = torch.sum(actions[wifi_index, 3])
+            max_wifi_load = float(self.v2i_wifi_bandwidth_max / self.v2i_wifi_bandwidth)
+            v2i_wifi_overload = torch.clamp(current_wifi_load - max_wifi_load, min=0.0)
+
+            # print(f"Edge {edge_index}: V2I WiFi Overload={v2i_wifi_overload:.2f}")
+
+            if v2i_wifi_overload.item() > 0 and wifi_index.numel() > 0:
+                scores = rem_dead[wifi_index] / rem_seg[wifi_index]
+                priorities = torch.argsort(scores)
+                to_drop = min(int(v2i_wifi_overload.item()), priorities.numel())
+                for i in range(to_drop):
+                    global_idx = wifi_index[priorities[i]]
+                    actions[global_idx, 3] = 0
+
+            # print(
+            #     f"Edge {edge_index}: New V2I WiFi Load={torch.sum(actions[wifi_index, 3])}"
+            # )
+
+        # --- V2N overload handling (least preferred) ---
+        max_v2n_actions = float(self.v2n_bandwidth_max / self.v2n_bandwidth)
+        current_v2n_actions = torch.sum(actions[:, 0])
+        v2n_load_ratio = current_v2n_actions / max_v2n_actions
+        v2n_overload = torch.clamp(current_v2n_actions - max_v2n_actions, min=0.0)
+
+        if v2n_overload.item() > 0:
+            v2n_index = torch.where(actions[:, 0] == 1)[0]
+            if v2n_index.numel() > 0:
+                scores = rem_dead[v2n_index] / rem_seg[v2n_index]
+                priorities = torch.argsort(scores)
+                to_drop = min(int(v2n_overload.item()), priorities.numel())
+                for i in range(to_drop):
+                    global_idx = v2n_index[priorities[i]]
+                    actions[global_idx, 0] = 0
+
+        # bring action back to the original shape if needed
         if joined:
             actions = actions.view(-1)
 
+        # record load ratios (convert scalars to Python floats)
         self.load_ratios_track.append(
             {
-                "v2n": v2n_load_ratio,
-                "v2v": v2v_load_ratio,
-                "v2i_pc5": v2i_pc5_load_ratio,
-                "v2i_wifi": v2i_wifi_load_ratio,
+                "v2n": float(v2n_load_ratio),
+                "v2v": float(v2v_load_ratio),
+                "v2i_pc5": (
+                    v2i_pc5_load_ratio.tolist()
+                    if hasattr(v2i_pc5_load_ratio, "tolist")
+                    else v2i_pc5_load_ratio
+                ),
+                "v2i_wifi": (
+                    v2i_wifi_load_ratio.tolist()
+                    if hasattr(v2i_wifi_load_ratio, "tolist")
+                    else v2i_wifi_load_ratio
+                ),
             }
         )
+
+        # debug print (per-RAT sums)
+        # try:
+        #     print(actions.sum(dim=0))
+        # except Exception:
+        #     print(actions.sum())
 
         return actions.to(device)
 

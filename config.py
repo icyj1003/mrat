@@ -18,7 +18,7 @@ def parse_args():
         help="Training episodes",
     )
     parser.add_argument(
-        "--evaluation_episodes", type=int, default=1000, help="Evaluation episodes"
+        "--evaluation_episodes", type=int, default=1, help="Evaluation episodes"
     )
     parser.add_argument(
         "--mini_batch_size", type=int, default=128, help="Mini batch size"
@@ -116,6 +116,7 @@ def parse_args():
             "heuristic_no_deadline_popularity",
             "heuristic_no_deadline_size",
             "heuristic_no_popularity_size",
+            "split_non_redundant",
         ],
     )
     parser.add_argument(

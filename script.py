@@ -22,6 +22,7 @@ def get_candidate(code):
     elif code == "4":
         cache = "heuristic"
         delivery = "all"
+        print(f"Select: Cache=Heuristic, Delivery=All")
     elif code == "5":
         cache = "heuristic"
         delivery = "drl_selective"
@@ -30,9 +31,12 @@ def get_candidate(code):
     return cache, delivery
 
 
-def v_scaling():
+def v_scaling(reversed=False):
     cache, delivery = get_candidate(opts.code)
-    num_vehicles_list = [100, 90, 80, 70, 60]
+    num_vehicles_list = [100, 90, 80, 70, 60, 50, 40, 20, 10]
+    if reversed:
+        num_vehicles_list.reverse()
+
     for num_vehicles in num_vehicles_list:
         cmd = f"python run.py --num_vehicles {num_vehicles} --name vehicle_scale_{num_vehicles}-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda_flag()}"
         os.system(cmd)
@@ -152,14 +156,14 @@ def cache_policy():
 
 
 def workload():
-    v2n_bandwidth_max = [5e7, 25e6, 10e6]
-    v2v_bandwidth_max = [5e7, 25e6, 10e6]
-    v2i_pc5_bandwidth_max = [1e7, 5e6, 2e6]
-    v2i_wifi_bandwidth_max = [4e7, 2e7, 1e7]
+    v2n_bandwidth_max = [10e7, 5e7, 25e6, 10e6]
+    v2v_bandwidth_max = [10e7, 5e7, 25e6, 10e6]
+    v2i_pc5_bandwidth_max = [2e7, 1e7, 5e6, 2e6]
+    v2i_wifi_bandwidth_max = [8e7, 4e7, 2e7, 1e7]
     cmds = []
     cache, delivery = get_candidate(opts.code)
     for i in range(1, len(v2n_bandwidth_max)):
-        cmd = f"python run.py --v2n_bandwidth_max {v2n_bandwidth_max[i]} --v2v_bandwidth_max {v2v_bandwidth_max[i]} --v2i_pc5_bandwidth_max {v2i_pc5_bandwidth_max[i]} --v2i_wifi_bandwidth_max {v2i_wifi_bandwidth_max[i]} --name workload_{i}_{cache}_{delivery}{cuda_flag()}"
+        cmd = f"python run.py --v2n_bandwidth_max {v2n_bandwidth_max[i]} --v2v_bandwidth_max {v2v_bandwidth_max[i]} --v2i_pc5_bandwidth_max {v2i_pc5_bandwidth_max[i]} --v2i_wifi_bandwidth_max {v2i_wifi_bandwidth_max[i]} --name workload_{i}_{cache}_{delivery}{cuda_flag()} --cache_policy {cache} --delivery_policy {delivery}"
         cmds.append(cmd)
 
     for cmd in cmds:
@@ -188,6 +192,11 @@ args.add_argument(
     help="Code for specific cache/delivery policy combination",
     default="0",
 )
+args.add_argument(
+    "--reverse",
+    action="store_true",
+    help="Reverse the order of scaling (for v_scaling)",
+)
 
 args.add_argument("--workload", action="store_true", help="Run workload experiments")
 
@@ -195,7 +204,7 @@ args.add_argument("--cuda", action="store_true", help="Run models on CUDA")
 opts = args.parse_args()
 
 if opts.v_scaling:
-    v_scaling()
+    v_scaling(reversed=opts.reverse)
 
 if opts.cache_policy:
     cache_policy()

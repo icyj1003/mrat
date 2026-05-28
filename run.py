@@ -5,6 +5,7 @@ from config import parse_args
 from policy.cache_policy import (
     heuristic_cache_placement,
     no_cache_placement,
+    non_redundant_cache_placement,
     random_cache_placement,
 )
 from policy.delivery_policy import (
@@ -99,6 +100,13 @@ if __name__ == "__main__":
     infos = []
     workload = {}
 
+    print(
+        env.v2n_bandwidth_max / env.v2n_bandwidth,
+        env.v2v_bandwidth_max / env.v2v_bandwidth,
+        env.v2i_pc5_bandwidth_max / env.v2i_pc5_bandwidth,
+        env.v2i_wifi_bandwidth_max / env.v2i_wifi_bandwidth,
+    )
+
     # Begin training loop
     for episode in tqdm(range(total_episodes), desc="Running", unit="episode"):
         # At Large time-scale:
@@ -148,9 +156,19 @@ if __name__ == "__main__":
             cache_actions = random_cache_placement(env)
         elif args.cache_policy == "none":
             cache_actions = no_cache_placement(env)
+        elif args.cache_policy == "split_non_redundant":
+            vehicle_cache_actions, cache_actions = non_redundant_cache_placement(
+                env,
+                caching_vehicle,
+            )
+        else:
+            raise ValueError(f"Unknown cache policy: {args.cache_policy}")
 
         # Overwrite the cache states in the environment before performing the small step
-        env.large_step(cache_actions, caching_vehicle)
+        if args.cache_policy == "split_non_redundant":
+            env.large_step(cache_actions, caching_vehicle, vehicle_cache_actions)
+        else:
+            env.large_step(cache_actions, caching_vehicle)
 
         # Small time-scale:
         # Run the multi-agent delivery policy here
