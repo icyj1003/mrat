@@ -53,7 +53,10 @@ def l_removal():
         # "python run.py --remove_pc5 --remove_wifi --remove_v2v --name onlybs-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
         #     cache=cache, delivery=delivery, cuda=cuda_flag()
         # ),
-        "python run.py --remove_edge_cooperation --name no_edge_cooperation-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        # "python run.py --remove_edge_cooperation --name no_edge_cooperation-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
+        #     cache=cache, delivery=delivery, cuda=cuda_flag()
+        # ),
+        "python run.py --remove_pc5 --remove_wifi --name no_v2r-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
     ]
@@ -151,7 +154,7 @@ def cache_policy():
 def workload():
     v2n_bandwidth_max = [5e7, 25e6, 10e6]
     v2v_bandwidth_max = [5e7, 25e6, 10e6]
-    v2i_pc5_bandwidth_max = [1e6, 5e6, 2e6]
+    v2i_pc5_bandwidth_max = [1e7, 5e6, 2e6]
     v2i_wifi_bandwidth_max = [4e7, 2e7, 1e7]
     cmds = []
     cache, delivery = get_candidate(opts.code)
