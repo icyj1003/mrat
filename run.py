@@ -100,13 +100,6 @@ if __name__ == "__main__":
     infos = []
     workload = {}
 
-    print(
-        env.v2n_bandwidth_max / env.v2n_bandwidth,
-        env.v2v_bandwidth_max / env.v2v_bandwidth,
-        env.v2i_pc5_bandwidth_max / env.v2i_pc5_bandwidth,
-        env.v2i_wifi_bandwidth_max / env.v2i_wifi_bandwidth,
-    )
-
     # Begin training loop
     for episode in tqdm(range(total_episodes), desc="Running", unit="episode"):
         # At Large time-scale:
