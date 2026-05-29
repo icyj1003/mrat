@@ -7,7 +7,20 @@ def parse_args():
         "--name", type=str, default="default", help="Name of the run for logging"
     )
     parser.add_argument(
-        "--num_vehicles", type=int, default=30, help="Number of vehicles"
+        "--num_vehicles",
+        "--vehicle_max",
+        dest="num_vehicles",
+        type=int,
+        default=30,
+        help="Maximum number of vehicles",
+    )
+    parser.add_argument(
+        "--num_vehicles_min",
+        "--vehicle_min",
+        dest="num_vehicles_min",
+        type=int,
+        default=5,
+        help="Minimum number of active vehicles sampled per episode",
     )
     parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
     parser.add_argument("--num_items", type=int, default=500, help="Number of items")
@@ -65,6 +78,8 @@ def parse_args():
     )
     parser.add_argument(
         "--delivery_deadline_min",
+        "--deadline_min",
+        dest="delivery_deadline_min",
         type=int,
         default=30,
         help="Minimum delivery deadline",
@@ -74,6 +89,8 @@ def parse_args():
 
     parser.add_argument(
         "--delivery_deadline_max",
+        "--deadline_max",
+        dest="delivery_deadline_max",
         type=int,
         default=60,
         help="Maximum delivery deadline",

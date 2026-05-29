@@ -3,21 +3,39 @@ import datetime
 
 import numpy as np
 
-from environ import Environment
-from torch.utils.tensorboard import SummaryWriter
+from environ.separated_env import SeparatedEnvironment
+
+
+class _NullWriter:
+    def add_scalar(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
 
 
 def log_and_collect(writer, env, episode):
+    active_mask = getattr(
+        env, "active_vehicle_mask", np.ones(env.num_vehicles, dtype=bool)
+    )
+    active_indices = np.where(active_mask)[0]
+
     # cumulative_reward
     cumulative_reward = np.sum(env.rewards_track)
 
     # delay per segment
     delay_per_segment = (
-        np.mean(env.delay / env.num_code_min[env.requested]) * 1000
+        np.mean(
+            env.delay[active_indices] / env.num_code_min[env.requested[active_indices]]
+        )
+        * 1000
     )  # to ms
 
     # cost per bit
-    cost_per_bit = np.mean(env.cost / (env.collected * env.code_size))
+    cost_per_bit = np.mean(
+        env.cost[active_indices]
+        / np.maximum(env.collected[active_indices] * env.code_size, 1e-8)
+    )
 
     # episode length
     episode_length = len(env.rewards_track)
@@ -27,11 +45,18 @@ def log_and_collect(writer, env, episode):
 
     # deadline violation
     mean_deadline_violation = np.clip(
-        np.mean(env.delay - env.delivery_deadline[env.requested]), 0, None
+        np.mean(
+            env.delay[active_indices]
+            - env.delivery_deadline[env.requested[active_indices]]
+        ),
+        0,
+        None,
     )
 
     # violation ratio
-    violation_ratio = np.mean(env.delay > env.delivery_deadline[env.requested])
+    violation_ratio = np.mean(
+        env.delay[active_indices] > env.delivery_deadline[env.requested[active_indices]]
+    )
 
     # v2v hit-ratio
     hit_rate = env.compute_hit_ratio()
@@ -111,8 +136,9 @@ def log_and_collect(writer, env, episode):
 
 def get_environment(args):
     # Create the environment
-    env = Environment(
+    env = SeparatedEnvironment(
         num_vehicles=args.num_vehicles,
+        num_vehicles_min=getattr(args, "num_vehicles_min", args.num_vehicles),
         num_edges=args.num_edges,
         num_items=args.num_items,
         delivery_deadline_min=args.delivery_deadline_min,
@@ -149,5 +175,10 @@ def aggregate_metrics(data):
 
 def get_logger(args):
     current = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    writer = SummaryWriter(log_dir=f"runs/{current}_{args.name}")
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+
+        writer = SummaryWriter(log_dir=f"runs/{current}_{args.name}")
+    except ModuleNotFoundError:
+        writer = _NullWriter()
     return current, writer
