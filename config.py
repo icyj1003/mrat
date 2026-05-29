@@ -174,25 +174,25 @@ def parse_args():
     parser.add_argument(
         "--v2n_bandwidth_max",
         type=float,
-        default=1e8,
+        default=20e6,
         help="Maximum bandwidth for V2N communication",
     )
     parser.add_argument(
         "--v2v_bandwidth_max",
         type=float,
-        default=1e8,
+        default=20e6,
         help="Maximum bandwidth for V2V communication",
     )
     parser.add_argument(
         "--v2i_pc5_bandwidth_max",
         type=float,
-        default=2e7,
+        default=20e6,
         help="Maximum bandwidth for V2I PC5 communication",
     )
     parser.add_argument(
         "--v2i_wifi_bandwidth_max",
         type=float,
-        default=8e7,
+        default=40e6,
         help="Maximum bandwidth for V2I WiFi communication",
     )
     return parser.parse_args()
