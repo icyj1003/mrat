@@ -1,4 +1,11 @@
+python run.py --name default01  --cost_weight 0.0 --delay_weight 1.0
+python run.py --name default19  --cost_weight 0.1 --delay_weight 0.9
 python run.py --name default28  --cost_weight 0.2 --delay_weight 0.8
+python run.py --name default37  --cost_weight 0.3 --delay_weight 0.7
 python run.py --name default46  --cost_weight 0.4 --delay_weight 0.6
+python run.py --name default55  --cost_weight 0.5 --delay_weight 0.5
 python run.py --name default64  --cost_weight 0.6 --delay_weight 0.4
+python run.py --name default73  --cost_weight 0.7 --delay_weight 0.3
 python run.py --name default82  --cost_weight 0.8 --delay_weight 0.2
+python run.py --name default91  --cost_weight 0.9 --delay_weight 0.1
+python run.py --name default10 --cost_weight 1.0 --delay_weight 0
