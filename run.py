@@ -185,7 +185,6 @@ if __name__ == "__main__":
             actions, log_probs = delivery_model.act(
                 state_tensor,  # num_agents x state_dim
                 mask_tensor,  # num_agents x num_actions
-                projection=env.bandwidth_constraints_handler,
             )
 
             # Reshape action to match the environment

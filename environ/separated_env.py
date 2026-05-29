@@ -6,7 +6,7 @@ from environ.utils import compute_data_rate, zipf
 from environ.markov import MarkovTransitionModel
 
 
-class SeparatedEnvironment(Environment):
+class AlternateEnvironment(Environment):
     """
     Generalized centralized environment for parameter-shared multi-agent PPO.
 
@@ -291,3 +291,6 @@ class SeparatedEnvironment(Environment):
 
         self.masks[~self.active_vehicle_mask, :, :] = 1
         self.states[~self.active_vehicle_mask] = 0
+
+
+SeparatedEnvironment = AlternateEnvironment

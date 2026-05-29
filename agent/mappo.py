@@ -71,7 +71,7 @@ class MAPPO:
         self.buffer = MARolloutBuffer(device=device)
         self.global_step = 0
 
-    def act(self, states, masks, projection=None):
+    def act(self, states, masks):
         # Batch actor inference across agents for speed.
         states = torch.stack([state.to(self.device) for state in states], dim=0)
         masks = torch.stack([mask.to(self.device) for mask in masks], dim=0)
@@ -84,14 +84,9 @@ class MAPPO:
         dist = torch.distributions.Categorical(logits=logit)
         actions = dist.sample().detach()  # num_agents x num_actions
 
-        if projection is not None:
-            valid_actions = projection(actions.detach().cpu()).to(self.device)
-        else:
-            valid_actions = actions
-
         # calculate log probs
-        log_probs = dist.log_prob(valid_actions).detach()  # num_agents x num_actions
-        return valid_actions.cpu(), log_probs.cpu()
+        log_probs = dist.log_prob(actions).detach()  # num_agents x num_actions
+        return actions.cpu(), log_probs.cpu()
 
     def evaluate(self, state, mask, action):
         state = state.to(self.device)

@@ -759,6 +759,50 @@ class Environment:
         # increment the step counter
         self.steps += 1
 
+        # Fair-share bandwidth allocation: divide each RAT budget by the number of
+        # active connections that selected that RAT in the current step.
+        if isinstance(actions, torch.Tensor):
+            action_array = actions.detach().cpu().numpy()
+        else:
+            action_array = np.asarray(actions)
+
+        if action_array.ndim == 1:
+            action_array = action_array.reshape(self.num_vehicles, self.num_rats)
+
+        active_delivery_mask = self.delivery_done == 0
+        v2n_count = max(
+            int(np.sum((action_array[:, 0] == 1) & active_delivery_mask)), 1
+        )
+        v2v_count = max(
+            int(np.sum((action_array[:, 1] == 1) & active_delivery_mask)), 1
+        )
+        fair_v2n_bandwidth = self.v2n_bandwidth_max / v2n_count
+        fair_v2v_bandwidth = self.v2v_bandwidth_max / v2v_count
+
+        fair_v2i_pc5_bandwidth = np.full(self.num_edges, self.v2i_pc5_bandwidth_max)
+        fair_v2i_wifi_bandwidth = np.full(self.num_edges, self.v2i_wifi_bandwidth_max)
+
+        for edge_index in range(self.num_edges):
+            edge_mask = (
+                (action_array[:, 2] == 1)
+                & (self.local_of == edge_index)
+                & active_delivery_mask
+                & (self.out == 0)
+            )
+            pc5_count = max(int(np.sum(edge_mask)), 1)
+            fair_v2i_pc5_bandwidth[edge_index] = self.v2i_pc5_bandwidth_max / pc5_count
+
+            wifi_mask = (
+                (action_array[:, 3] == 1)
+                & (self.local_of == edge_index)
+                & active_delivery_mask
+                & (self.out == 0)
+            )
+            wifi_count = max(int(np.sum(wifi_mask)), 1)
+            fair_v2i_wifi_bandwidth[edge_index] = (
+                self.v2i_wifi_bandwidth_max / wifi_count
+            )
+
         # actions = np.ones((self.num_vehicles, self.num_rats))
 
         # initialize the cost and delay for the current step
@@ -797,7 +841,7 @@ class Environment:
 
                 # compute v2n data rate with macro path loss model
                 data_rate = compute_data_rate(
-                    allocated_spectrum=self.v2n_bandwidth,
+                    allocated_spectrum=fair_v2n_bandwidth,
                     transmission_power=self.v2n_transmission_power,
                     noise_power=self.noise_power,
                     distance=distance,
@@ -846,7 +890,7 @@ class Environment:
 
                     # compute the v2v data rate with micro path loss model
                     data_rate = compute_data_rate(
-                        allocated_spectrum=self.v2v_bandwidth,
+                        allocated_spectrum=fair_v2v_bandwidth,
                         transmission_power=self.v2v_transmission_power,
                         noise_power=self.noise_power,
                         distance=min_distance,
@@ -876,7 +920,9 @@ class Environment:
 
                 # compute v2i pc5 data rate with micro path loss model
                 data_rate = compute_data_rate(
-                    allocated_spectrum=self.v2i_pc5_bandwidth,
+                    allocated_spectrum=fair_v2i_pc5_bandwidth[
+                        int(self.local_of[vehicle_index])
+                    ],
                     transmission_power=self.v2i_pc5_transmission_power,
                     noise_power=self.noise_power,
                     distance=distance,
@@ -956,7 +1002,9 @@ class Environment:
                 if distance < self.v2i_wifi_coverage:
                     # compute v2i wifi data rate with micro path loss model
                     data_rate = compute_data_rate(
-                        allocated_spectrum=self.v2i_wifi_bandwidth,
+                        allocated_spectrum=fair_v2i_wifi_bandwidth[
+                            int(self.local_of[vehicle_index])
+                        ],
                         transmission_power=self.v2i_wifi_transmission_power,
                         noise_power=self.noise_power,
                         distance=distance,

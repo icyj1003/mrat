@@ -3,7 +3,7 @@ import datetime
 
 import numpy as np
 
-from environ.separated_env import SeparatedEnvironment
+from environ.alternate_env import AlternateEnvironment
 
 
 class _NullWriter:
@@ -136,7 +136,7 @@ def log_and_collect(writer, env, episode):
 
 def get_environment(args):
     # Create the environment
-    env = SeparatedEnvironment(
+    env = AlternateEnvironment(
         num_vehicles=args.num_vehicles,
         num_vehicles_min=getattr(args, "num_vehicles_min", args.num_vehicles),
         num_edges=args.num_edges,
