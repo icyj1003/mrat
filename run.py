@@ -10,6 +10,7 @@ from policy.cache_policy import (
 )
 from policy.delivery_policy import (
     AllLinkDeliveryPolicy,
+    GreedyDeliveryPolicy,
     MAPPODeliveryPolicy,
     RandomDeliveryPolicy,
     RATSelection,
@@ -70,6 +71,12 @@ if __name__ == "__main__":
         )
     elif args.delivery_policy == "cheapselect":
         delivery_model = CheapSel(
+            args,
+            env,
+            writer=writer,
+        )
+    elif args.delivery_policy == "greedy":
+        delivery_model = GreedyDeliveryPolicy(
             args,
             env,
             writer=writer,

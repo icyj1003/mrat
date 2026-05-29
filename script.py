@@ -156,13 +156,13 @@ def cache_policy():
 
 
 def workload():
-    v2n_bandwidth_max = [10e7, 5e7, 25e6, 10e6]
-    v2v_bandwidth_max = [10e7, 5e7, 25e6, 10e6]
-    v2i_pc5_bandwidth_max = [2e7, 1e7, 5e6, 2e6]
-    v2i_wifi_bandwidth_max = [8e7, 4e7, 2e7, 1e7]
+    v2n_bandwidth_max = [10e7, 5e7, 25e6, 10e6, 5e6]
+    v2v_bandwidth_max = [10e7, 5e7, 25e6, 10e6, 5e6]
+    v2i_pc5_bandwidth_max = [2e7, 1e7, 5e6, 2e6, 1e6]
+    v2i_wifi_bandwidth_max = [8e7, 4e7, 2e7, 1e7, 5e6]
     cmds = []
     cache, delivery = get_candidate(opts.code)
-    for i in range(1, len(v2n_bandwidth_max)):
+    for i in range(4, len(v2n_bandwidth_max)):
         cmd = f"python run.py --v2n_bandwidth_max {v2n_bandwidth_max[i]} --v2v_bandwidth_max {v2v_bandwidth_max[i]} --v2i_pc5_bandwidth_max {v2i_pc5_bandwidth_max[i]} --v2i_wifi_bandwidth_max {v2i_wifi_bandwidth_max[i]} --name workload_{i}_{cache}_{delivery}{cuda_flag()} --cache_policy {cache} --delivery_policy {delivery}"
         cmds.append(cmd)
 
