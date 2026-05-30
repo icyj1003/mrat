@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from environ.env import Environment
-from environ.utils import compute_data_rate, zipf
+from environ.utils import compute_snr, zipf
 from environ.markov import MarkovTransitionModel
 
 
@@ -180,80 +180,63 @@ class AlternateEnvironment(Environment):
             0,
         )
 
+        def norm_snr(snr_linear):
+            snr_db = 10 * np.log10(np.maximum(snr_linear, 1e-12))
+            return np.clip((snr_db + 50.0) / 100.0, 0.0, 1.0)
+
         for vehicle_index in range(self.max_vehicles):
             if not active_vehicle_mask[vehicle_index]:
                 continue
 
-            link_state[vehicle_index, 3] = np.clip(
-                compute_data_rate(
-                    allocated_spectrum=self.v2n_bandwidth,
-                    transmission_power=self.v2n_transmission_power,
-                    noise_power=self.noise_power,
-                    distance=float(self.bs_distance[vehicle_index]),
-                    path_loss_model="macro",
-                )
-                / max(self.v2n_bandwidth_max, 1.0),
-                0,
-                1,
+            v2n_snr = compute_snr(
+                transmission_power=self.v2n_transmission_power,
+                noise_power=self.noise_power,
+                distance=float(self.bs_distance[vehicle_index]),
+                path_loss_model="macro",
             )
+            link_state[vehicle_index, 3] = norm_snr(v2n_snr)
 
             if self.out[vehicle_index] == 0:
                 distance = float(self.local_edge_distance[vehicle_index])
                 local_edge = int(self.local_of[vehicle_index])
 
                 if not self.disable_v2v:
-                    has_neighbor = any(
-                        vehicle_index != other_index
-                        and self.vehicle_distance[vehicle_index, other_index]
-                        < self.v2v_pc5_coverage
-                        and self.cache[
-                            self.num_edges + other_index, self.requested[vehicle_index]
-                        ]
-                        == 1
-                        for other_index in range(self.max_vehicles)
-                        if self.active_vehicle_mask[other_index]
+                    nearest_idx = (
+                        int(self.nearest_cache_idx[vehicle_index])
+                        if hasattr(self, "nearest_cache_idx")
+                        else -1
                     )
-                    if has_neighbor:
-                        link_state[vehicle_index, 0] = np.clip(
-                            compute_data_rate(
-                                allocated_spectrum=self.v2v_bandwidth,
-                                transmission_power=self.v2v_transmission_power,
-                                noise_power=self.noise_power,
-                                distance=max(1.0, float(self.v2v_pc5_coverage) / 2),
-                                path_loss_model="micro",
-                            )
-                            / max(self.v2v_bandwidth_max, 1.0),
-                            0,
-                            1,
+                    nearest_dist = (
+                        float(self.nearest_cache_dist[vehicle_index])
+                        if hasattr(self, "nearest_cache_dist")
+                        else np.inf
+                    )
+                    if nearest_idx >= 0 and nearest_dist < self.v2v_pc5_coverage:
+                        v2v_snr = compute_snr(
+                            transmission_power=self.v2v_transmission_power,
+                            noise_power=self.noise_power,
+                            distance=max(1.0, nearest_dist),
+                            path_loss_model="micro",
                         )
+                        link_state[vehicle_index, 0] = norm_snr(v2v_snr)
 
                 if not self.disable_pc5 and distance < self.v2i_pc5_coverage:
-                    link_state[vehicle_index, 1] = np.clip(
-                        compute_data_rate(
-                            allocated_spectrum=self.v2i_pc5_bandwidth,
-                            transmission_power=self.v2i_pc5_transmission_power,
-                            noise_power=self.noise_power,
-                            distance=distance,
-                            path_loss_model="micro",
-                        )
-                        / max(self.v2i_pc5_bandwidth_max, 1.0),
-                        0,
-                        1,
+                    v2i_pc5_snr = compute_snr(
+                        transmission_power=self.v2i_pc5_transmission_power,
+                        noise_power=self.noise_power,
+                        distance=distance,
+                        path_loss_model="micro",
                     )
+                    link_state[vehicle_index, 1] = norm_snr(v2i_pc5_snr)
 
                 if not self.disable_wifi and distance < self.v2i_wifi_coverage:
-                    link_state[vehicle_index, 2] = np.clip(
-                        compute_data_rate(
-                            allocated_spectrum=self.v2i_wifi_bandwidth,
-                            transmission_power=self.v2i_wifi_transmission_power,
-                            noise_power=self.noise_power,
-                            distance=distance,
-                            path_loss_model="micro",
-                        )
-                        / max(self.v2i_wifi_bandwidth_max, 1.0),
-                        0,
-                        1,
+                    v2i_wifi_snr = compute_snr(
+                        transmission_power=self.v2i_wifi_transmission_power,
+                        noise_power=self.noise_power,
+                        distance=distance,
+                        path_loss_model="micro",
                     )
+                    link_state[vehicle_index, 2] = norm_snr(v2i_wifi_snr)
 
         network_state = np.array(
             [

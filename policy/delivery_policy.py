@@ -2,13 +2,24 @@ import numpy as np
 import torch
 
 from agent.mappo import MAPPO
-from environ.utils import compute_data_rate
+from environ.utils import compute_data_rate, compute_snr
 from .bga import BGA
 
 
 class DeliveryPolicy:
     def __init__(self, *args, **kwargs):
         self.steps = 0
+
+    def _nearest_v2v_distance(self, vehicle_index):
+        if not hasattr(self, "env") or not hasattr(self.env, "nearest_cache_idx"):
+            return None
+
+        nearest_idx = int(self.env.nearest_cache_idx[vehicle_index])
+        nearest_dist = float(self.env.nearest_cache_dist[vehicle_index])
+        if nearest_idx < 0 or nearest_dist >= self.env.v2v_pc5_coverage:
+            return None
+
+        return nearest_idx, nearest_dist
 
     def act(self, *args, **kwargs):
         self.steps += 1
@@ -411,40 +422,18 @@ class CheapSel(DeliveryPolicy):
 
             # download with v2v
             if masks_np[vehicle_index, 1, 1] == 0:  # if v2v is not restricted
-                nearby_vehicles = []
-
-                # search all vehicles in communication range
-                nearby_vehicles = [
-                    (
-                        nearby_vehicle_index,
-                        self.env.vehicle_distance[vehicle_index, nearby_vehicle_index],
-                    )
-                    for nearby_vehicle_index in range(self.env.num_vehicles)
-                    if vehicle_index != nearby_vehicle_index
-                    and self.env.vehicle_distance[vehicle_index, nearby_vehicle_index]
-                    < self.env.v2v_pc5_coverage
-                    and self.env.cache[
-                        self.env.num_edges + nearby_vehicle_index, requested_item
-                    ]
-                    == 1
-                ]
-
-                # search nearby vehicles that have the requested item
-
-                if len(nearby_vehicles) > 0:
-                    min_distance = self.env.v2v_pc5_coverage
-
-                    for nearby_vehicle_index, distance in nearby_vehicles:
-                        if distance < min_distance:
-                            min_distance = distance
-
-                    # compute the v2v data rate with micro path loss model
-                    data_rate = compute_data_rate(
-                        allocated_spectrum=self.env.v2v_bandwidth,
+                nearest_v2v = self._nearest_v2v_distance(vehicle_index)
+                if nearest_v2v is not None:
+                    _, min_distance = nearest_v2v
+                    v2v_snr = compute_snr(
                         transmission_power=self.env.v2v_transmission_power,
                         noise_power=self.env.noise_power,
                         distance=min_distance,
                         path_loss_model="micro",
+                    )
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=self.env.v2v_bandwidth,
+                        snr_linear=v2v_snr,
                     )
 
                     # compute the number of segments that can be transfered
@@ -682,31 +671,20 @@ class GreedyDeliveryPolicy(DeliveryPolicy):
             return data_rate, cost
 
         if rat_index == 1:
-            nearby_vehicles = [
-                (
-                    nearby_vehicle_index,
-                    self.env.vehicle_distance[vehicle_index, nearby_vehicle_index],
-                )
-                for nearby_vehicle_index in range(self.env.num_vehicles)
-                if vehicle_index != nearby_vehicle_index
-                and self.env.vehicle_distance[vehicle_index, nearby_vehicle_index]
-                < self.env.v2v_pc5_coverage
-                and self.env.cache[
-                    self.env.num_edges + nearby_vehicle_index, requested_item
-                ]
-                == 1
-            ]
-
-            if len(nearby_vehicles) == 0:
+            nearest_v2v = self._nearest_v2v_distance(vehicle_index)
+            if nearest_v2v is None:
                 return None
 
-            min_distance = min(distance for _, distance in nearby_vehicles)
-            data_rate = compute_data_rate(
-                allocated_spectrum=self.env.v2v_bandwidth,
+            _, min_distance = nearest_v2v
+            v2v_snr = compute_snr(
                 transmission_power=self.env.v2v_transmission_power,
                 noise_power=self.env.noise_power,
                 distance=min_distance,
                 path_loss_model="micro",
+            )
+            data_rate = compute_data_rate(
+                allocated_spectrum=self.env.v2v_bandwidth,
+                snr_linear=v2v_snr,
             )
             transferred_segment = np.floor(data_rate * self.env.dt / self.env.code_size)
             cost = self.env.v2v_cost * transferred_segment * self.env.code_size
@@ -1055,40 +1033,18 @@ class GA(DeliveryPolicy):
 
             # download with v2v
             if actions[vehicle_index, 1] == 1:  # if v2v is not restricted
-                nearby_vehicles = []
-
-                # search all vehicles in communication range
-                nearby_vehicles = [
-                    (
-                        nearby_vehicle_index,
-                        self.env.vehicle_distance[vehicle_index, nearby_vehicle_index],
-                    )
-                    for nearby_vehicle_index in range(self.env.num_vehicles)
-                    if vehicle_index != nearby_vehicle_index
-                    and self.env.vehicle_distance[vehicle_index, nearby_vehicle_index]
-                    < self.env.v2v_pc5_coverage
-                    and self.env.cache[
-                        self.env.num_edges + nearby_vehicle_index, requested_item
-                    ]
-                    == 1
-                ]
-
-                # search nearby vehicles that have the requested item
-
-                if len(nearby_vehicles) > 0:
-                    min_distance = self.env.v2v_pc5_coverage
-
-                    for nearby_vehicle_index, distance in nearby_vehicles:
-                        if distance < min_distance:
-                            min_distance = distance
-
-                    # compute the v2v data rate with micro path loss model
-                    data_rate = compute_data_rate(
-                        allocated_spectrum=self.env.v2v_bandwidth,
+                nearest_v2v = self._nearest_v2v_distance(vehicle_index)
+                if nearest_v2v is not None:
+                    _, min_distance = nearest_v2v
+                    v2v_snr = compute_snr(
                         transmission_power=self.env.v2v_transmission_power,
                         noise_power=self.env.noise_power,
                         distance=min_distance,
                         path_loss_model="micro",
+                    )
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=self.env.v2v_bandwidth,
+                        snr_linear=v2v_snr,
                     )
 
                     # compute the number of segments that can be transfered

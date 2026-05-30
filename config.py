@@ -11,7 +11,7 @@ def parse_args():
         "--vehicle_max",
         dest="num_vehicles",
         type=int,
-        default=50,
+        default=30,
         help="Maximum number of vehicles",
     )
     parser.add_argument(
@@ -96,7 +96,7 @@ def parse_args():
         help="Maximum delivery deadline",
     )
     parser.add_argument(
-        "--item_size_max", type=int, default=200, help="Maximum item size"
+        "--item_size_max", type=int, default=100, help="Maximum item size"
     )
     parser.add_argument(
         "--item_size_min", type=int, default=50, help="Minimum item size"

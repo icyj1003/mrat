@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from scipy.stats import truncnorm
 
-from environ.utils import compute_data_rate, zipf
+from environ.utils import compute_data_rate, compute_snr, zipf
 from environ.markov import MarkovTransitionModel
 
 
@@ -60,7 +60,7 @@ class Environment:
         v2i_wifi_transmission_power: float = 25,
         v2v_transmission_power: float = 30,
         # Noise & Rates
-        noise_power: float = -174,
+        noise_power: float = -114,
         i2i_data_rate: float = 100e6,
         i2n_data_rate: float = 150e6,
         i2i_cost: float = 0.1,
@@ -519,26 +519,11 @@ class Environment:
         self.masks[self.out == 1, 3, 1] = 1
 
         # if any nearby vehicle has the requested item and in communication range
-        for vehicle_index in range(self.num_vehicles):
-            any_car = False
-            for nearby_vehicle_index in range(self.num_vehicles):
-                if (
-                    vehicle_index != nearby_vehicle_index  # ignore self
-                    and self.vehicle_distance[vehicle_index, nearby_vehicle_index]
-                    < self.v2v_pc5_coverage  # check if in communication range
-                    and self.cache[
-                        self.num_edges + nearby_vehicle_index,
-                        self.requested[vehicle_index],
-                    ]
-                    == 1  # check if the nearby vehicle has the requested item
-                ):
-                    # if v2v is available, break the loop
-                    any_car = True
-                    break
-
-            if not any_car:
-                # if v2v is not available, force disable v2v (mask 1)
-                self.masks[vehicle_index, 1, 1] = 1
+        self.update_nearest_cache()
+        nearby_available = (self.nearest_cache_idx >= 0) & (
+            self.nearest_cache_dist < self.v2v_pc5_coverage
+        )
+        self.masks[~nearby_available, 1, 1] = 1
 
         # if delivery is done, force disable all actions (mask 1)
         self.masks[self.delivery_done == 1, :, 1] = 1
@@ -749,6 +734,33 @@ class Environment:
         self.positions[:, 0] += self.velocities * self.dt * self.direction
         self.update_mobility_status()
 
+    def update_nearest_cache(self) -> None:
+        """
+        Cache the nearest vehicle that has the requested item for each vehicle.
+        """
+        self.nearest_cache_idx = np.full(self.num_vehicles, -1, dtype=int)
+        self.nearest_cache_dist = np.full(self.num_vehicles, np.inf, dtype=float)
+
+        vehicle_cache = self.cache[self.num_edges : self.num_edges + self.num_vehicles]
+
+        for vehicle_index in range(self.num_vehicles):
+            if self.delivery_done[vehicle_index] == 1:
+                continue
+
+            requested_item = int(self.requested[vehicle_index])
+            candidate_indices = np.where(vehicle_cache[:, requested_item] == 1)[0]
+            if candidate_indices.size == 0:
+                continue
+
+            candidate_distances = self.vehicle_distance[
+                vehicle_index, candidate_indices
+            ]
+            nearest_pos = int(np.argmin(candidate_distances))
+            self.nearest_cache_idx[vehicle_index] = int(candidate_indices[nearest_pos])
+            self.nearest_cache_dist[vehicle_index] = float(
+                candidate_distances[nearest_pos]
+            )
+
     # Simulation Steps
     def small_step(self, actions: np.ndarray) -> None:
         """
@@ -839,13 +851,15 @@ class Environment:
                 # compute the distance from the vehicle to the BS
                 distance = self.bs_distance[vehicle_index]
 
-                # compute v2n data rate with macro path loss model
-                data_rate = compute_data_rate(
-                    allocated_spectrum=fair_v2n_bandwidth,
+                v2n_snr = compute_snr(
                     transmission_power=self.v2n_transmission_power,
                     noise_power=self.noise_power,
                     distance=distance,
                     path_loss_model="macro",
+                )
+                data_rate = compute_data_rate(
+                    allocated_spectrum=fair_v2n_bandwidth,
+                    snr_linear=v2n_snr,
                 )
 
                 # compute the number of segments that can be transfered
@@ -861,40 +875,27 @@ class Environment:
 
             # download with v2v
             if actions[vehicle_index, 1] == 1:
-                nearby_vehicles = []
+                nearest_idx = (
+                    int(self.nearest_cache_idx[vehicle_index])
+                    if hasattr(self, "nearest_cache_idx")
+                    else -1
+                )
+                nearest_dist = (
+                    float(self.nearest_cache_dist[vehicle_index])
+                    if hasattr(self, "nearest_cache_dist")
+                    else np.inf
+                )
 
-                # search all vehicles in communication range
-                nearby_vehicles = [
-                    (
-                        nearby_vehicle_index,
-                        self.vehicle_distance[vehicle_index, nearby_vehicle_index],
-                    )
-                    for nearby_vehicle_index in range(self.num_vehicles)
-                    if vehicle_index != nearby_vehicle_index
-                    and self.vehicle_distance[vehicle_index, nearby_vehicle_index]
-                    < self.v2v_pc5_coverage
-                    and self.cache[
-                        self.num_edges + nearby_vehicle_index, requested_item
-                    ]
-                    == 1
-                ]
-
-                # search nearby vehicles that have the requested item
-
-                if len(nearby_vehicles) > 0:
-                    min_distance = self.v2v_pc5_coverage
-
-                    for nearby_vehicle_index, distance in nearby_vehicles:
-                        if distance < min_distance:
-                            min_distance = distance
-
-                    # compute the v2v data rate with micro path loss model
-                    data_rate = compute_data_rate(
-                        allocated_spectrum=fair_v2v_bandwidth,
+                if nearest_idx >= 0 and nearest_dist < self.v2v_pc5_coverage:
+                    v2v_snr = compute_snr(
                         transmission_power=self.v2v_transmission_power,
                         noise_power=self.noise_power,
-                        distance=min_distance,
+                        distance=nearest_dist,
                         path_loss_model="micro",
+                    )
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=fair_v2v_bandwidth,
+                        snr_linear=v2v_snr,
                     )
 
                     # compute the number of segments that can be transfered
@@ -918,15 +919,17 @@ class Environment:
                 # compute the distance from the vehicle to its local edge
                 distance = self.local_edge_distance[vehicle_index]
 
-                # compute v2i pc5 data rate with micro path loss model
-                data_rate = compute_data_rate(
-                    allocated_spectrum=fair_v2i_pc5_bandwidth[
-                        int(self.local_of[vehicle_index])
-                    ],
+                v2i_pc5_snr = compute_snr(
                     transmission_power=self.v2i_pc5_transmission_power,
                     noise_power=self.noise_power,
                     distance=distance,
                     path_loss_model="micro",
+                )
+                data_rate = compute_data_rate(
+                    allocated_spectrum=fair_v2i_pc5_bandwidth[
+                        int(self.local_of[vehicle_index])
+                    ],
+                    snr_linear=v2i_pc5_snr,
                 )
 
                 # check if the edge has the requested item
@@ -1000,15 +1003,17 @@ class Environment:
                 distance = self.local_edge_distance[vehicle_index]
 
                 if distance < self.v2i_wifi_coverage:
-                    # compute v2i wifi data rate with micro path loss model
-                    data_rate = compute_data_rate(
-                        allocated_spectrum=fair_v2i_wifi_bandwidth[
-                            int(self.local_of[vehicle_index])
-                        ],
+                    v2i_wifi_snr = compute_snr(
                         transmission_power=self.v2i_wifi_transmission_power,
                         noise_power=self.noise_power,
                         distance=distance,
                         path_loss_model="micro",
+                    )
+                    data_rate = compute_data_rate(
+                        allocated_spectrum=fair_v2i_wifi_bandwidth[
+                            int(self.local_of[vehicle_index])
+                        ],
+                        snr_linear=v2i_wifi_snr,
                     )
 
                     # check if the edge has the requested item
