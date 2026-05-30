@@ -149,15 +149,24 @@ class MAPPO:
             violations,  # num_agents x trajectory length x 1
         ) = self.buffer.get()
 
+        # Determine active agents from state last feature (active mask appended in env.states)
+        # states shape: (num_agents, traj_len, state_dim)
+        with torch.no_grad():
+            active_flags = (states[:, 0, -1].squeeze(-1) > 0.5).to(torch.bool)
+
         list_advantages = []
         list_returns = []
+        active_indices = []
 
         for agent_idx in range(self.num_agents):
+            if not active_flags[agent_idx]:
+                # skip inactive agents (they are padded)
+                continue
+
+            active_indices.append(agent_idx)
 
             # Get the state values from the target critics
-            agent_values = self.critic_target(
-                states[agent_idx]
-            ).detach()  # trajectory length x 1
+            agent_values = self.critic_target(states[agent_idx]).detach()
 
             # Get the next state values from the target critics
             next_agent_values = self.critic_target(next_states[agent_idx]).detach()
@@ -167,7 +176,7 @@ class MAPPO:
                 [agent_values, next_agent_values[-1].unsqueeze(0)], dim=0
             )
 
-            # if using lagrangian penalty, apply it to the rewards
+            # if using lagrangian penalty, apply it to the rewards (active agents only)
             if self.use_lagrange:
                 rewards[agent_idx] = (
                     rewards[agent_idx] - self.penalty_coeff * violations[agent_idx]
@@ -182,27 +191,28 @@ class MAPPO:
             list_advantages.append(agent_advantages)
             list_returns.append(agent_returns)
 
-        # convert to tensor
+        # convert to tensor (only active agents included)
+        if len(list_advantages) == 0:
+            # no active agents, nothing to update
+            self.buffer.clear()
+            return
+
         advantages = torch.stack(list_advantages, dim=0)
         returns = torch.stack(list_returns, dim=0)
 
         # reshape dim 1 of all agents to create a joint dataset
-        joint_states = states.reshape(
-            -1, self.state_dim
-        )  # (num_agents * trajectory length) x state_dim
-        joint_masks = masks.reshape(
-            -1, self.num_actions, self.action_dim
-        )  # (num_agents * trajectory length) x num_actions x action_dim
-        joint_actions = actions.reshape(
-            -1, self.num_actions
-        )  # (num_agents * trajectory length) x num_actions
-        joint_log_probs = log_probs.reshape(
-            -1, self.num_actions
-        )  # (num_agents * trajectory length) x num_actions
-        joint_advantages = advantages.reshape(
-            -1, 1
-        )  # (num_agents * trajectory length) x 1
-        joint_returns = returns.reshape(-1, 1)  # (num_agents * trajectory length) x 1
+        # select only active agents for training dataset
+        active_states = states[active_indices]  # (num_active, T, state_dim)
+        active_masks = masks[active_indices]
+        active_actions = actions[active_indices]
+        active_log_probs = log_probs[active_indices]
+
+        joint_states = active_states.reshape(-1, self.state_dim)
+        joint_masks = active_masks.reshape(-1, self.num_actions, self.action_dim)
+        joint_actions = active_actions.reshape(-1, self.num_actions)
+        joint_log_probs = active_log_probs.reshape(-1, self.num_actions)
+        joint_advantages = advantages.reshape(-1, 1)
+        joint_returns = returns.reshape(-1, 1)
 
         # create a single dataset to train the joint policy
         dataset = torch.utils.data.TensorDataset(
@@ -317,7 +327,13 @@ class MAPPO:
 
         # update the penalty coefficient if using lagrangian penalty
         if self.use_lagrange:
-            self.penalty_coeff += self.penalty_lr * (violations.mean()).detach()
+            # compute mean violations over active agents only
+            if len(active_indices) > 0:
+                active_violations = violations[active_indices]
+                mean_violation = active_violations.mean()
+            else:
+                mean_violation = torch.tensor(0.0, device=violations.device)
+            self.penalty_coeff += self.penalty_lr * (mean_violation).detach()
             self.penalty_coeff = max(0, min(self.penalty_coeff, 10))
 
         # clear the buffer

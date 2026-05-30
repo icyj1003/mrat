@@ -68,10 +68,10 @@ class Environment:
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
-        cost_scale: float = 3e1,
+        cost_scale: float = 5e1,
         # (0.2, 0.8), (0.4, 0.6), (0.6, 0.4), (0.8, 0.2)
-        delay_weight: float = 0.4,
-        cost_weight: float = 0.6,
+        delay_weight: float = 0.5,
+        cost_weight: float = 0.5,
         disable_v2v: bool = False,
         disable_wifi: bool = False,
         disable_pc5: bool = False,
@@ -107,7 +107,7 @@ class Environment:
             ],
             axis=1,
         )
-        self.bs_positions = (self.road_length / 2, self.road_width / 2)
+        self.bs_positions = (self.road_length / 2, self.road_width / 2 + 200)
 
         # Content Coding
         self.code_size = code_size
@@ -1104,14 +1104,10 @@ class Environment:
             / self.item_size[self.requested]
         )  # cost per bit
 
-        print("delay term:", delay_term.shape, "cost term:", cost_term.shape)
-
         # compute the reward, dones, and violations
         rewards = (cost_term + delay_term).reshape(-1, 1)
         dones = self.delivery_done.astype(float).reshape(-1, 1)
         violations = self.compute_deadline_violation()
-
-        print("rewards:", rewards)
 
         # Track the utility
         self.utility_track.append(actions)
@@ -1121,15 +1117,24 @@ class Environment:
             sum(hit_v2i) / sum(use_v2i) if sum(use_v2i) > 0 else -1
         )
 
-        # Track the rewards
-        self.rewards_track.append(rewards.mean())
+        # Track the rewards (mean over active vehicles only to avoid padding dilution)
+        active_mask = self.active_vehicle_mask
+        if np.any(active_mask):
+            active_rewards_mean = float(np.mean(rewards[active_mask]))
+            # print(
+            #     "Cost Term Mean:",
+            #     np.mean(cost_term[active_mask]),
+            #     "Delay Term Mean:",
+            #     np.mean(delay_term[active_mask]),
+            # )
+        else:
+            active_rewards_mean = 0.0
+        self.rewards_track.append(active_rewards_mean)
 
         # update env
         self.update_velocity()
         self.update_position()
         self.set_states()
-
-        print(rewards.mean())
 
         # return the next states, rewards, dones, and violations
         return (
