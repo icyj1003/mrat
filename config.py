@@ -22,7 +22,7 @@ def parse_args():
         default=10,
         help="Minimum number of active vehicles sampled per episode",
     )
-    parser.add_argument("--num_edges", type=int, default=3, help="Number of edges")
+    parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
     parser.add_argument("--num_items", type=int, default=500, help="Number of items")
     parser.add_argument(
         "--training_episodes",
@@ -96,7 +96,7 @@ def parse_args():
         help="Maximum delivery deadline",
     )
     parser.add_argument(
-        "--item_size_max", type=int, default=500, help="Maximum item size"
+        "--item_size_max", type=int, default=200, help="Maximum item size"
     )
     parser.add_argument(
         "--item_size_min", type=int, default=50, help="Minimum item size"

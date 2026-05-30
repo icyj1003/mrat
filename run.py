@@ -173,6 +173,7 @@ if __name__ == "__main__":
         # Small time-scale:
         # Run the multi-agent delivery policy here
         while not env.is_small_done():
+
             # Convert to tensor
             state_tensor = torch.tensor(
                 env.states, dtype=torch.float32, device=args.device

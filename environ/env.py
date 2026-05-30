@@ -53,9 +53,9 @@ class Environment:
         v2n_cost: float = 10,
         v2i_pc5_cost: float = 1,
         v2i_wifi_cost: float = 0.8,
-        v2v_cost: float = 0.8,
+        v2v_cost: float = 0.3,
         # Transmission Power (dBm)
-        v2n_transmission_power: float = 35,
+        v2n_transmission_power: float = 43,
         v2i_pc5_transmission_power: float = 33,
         v2i_wifi_transmission_power: float = 25,
         v2v_transmission_power: float = 30,
@@ -63,8 +63,8 @@ class Environment:
         noise_power: float = -174,
         i2i_data_rate: float = 100e6,
         i2n_data_rate: float = 150e6,
-        i2i_cost: float = 0.3,
-        i2n_cost: float = 30,
+        i2i_cost: float = 0.1,
+        i2n_cost: float = 8,
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
@@ -740,7 +740,7 @@ class Environment:
         Returns:
             bool: True if all deliveries are done, False otherwise.
         """
-        return np.all(self.delivery_done == 1)
+        return np.all(self.delivery_done == 1) or self.steps >= 300
 
     def update_position(self) -> None:
         """
@@ -1104,10 +1104,14 @@ class Environment:
             / self.item_size[self.requested]
         )  # cost per bit
 
+        print("delay term:", delay_term.shape, "cost term:", cost_term.shape)
+
         # compute the reward, dones, and violations
         rewards = (cost_term + delay_term).reshape(-1, 1)
         dones = self.delivery_done.astype(float).reshape(-1, 1)
         violations = self.compute_deadline_violation()
+
+        print("rewards:", rewards)
 
         # Track the utility
         self.utility_track.append(actions)
@@ -1124,6 +1128,8 @@ class Environment:
         self.update_velocity()
         self.update_position()
         self.set_states()
+
+        print(rewards.mean())
 
         # return the next states, rewards, dones, and violations
         return (

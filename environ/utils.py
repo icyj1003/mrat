@@ -20,35 +20,52 @@ def zipf(num_items, alpha) -> np.ndarray:
 def compute_data_rate(
     allocated_spectrum: float,
     transmission_power: float,
-    noise_power: float,
-    distance: Union[float, np.ndarray],
-    path_loss_model: Literal["macro", "micro"] = "macro",
-) -> Union[float, np.ndarray]:
+    distance: float,
+    noise_power: float = -174,
+    noise_figure_db: float = 9.0,
+    path_loss_model: str = "macro",
+):
     """
-    Compute the data rate based on the Shannon-Hartley theorem.
-    Args:
-        allocated_spectrum (float): Allocated spectrum in Hz.
-        transmission_power (float): Transmission power in dBm.
-        noise_power (float): Noise power in dBm.
-        distance (Union[float, np.ndarray]): Distance in meters.
-        path_loss_model (str): Path loss model, either "macro" or "micro".
+    Compute data rate using Shannon capacity.
+
+    Includes:
+        - Path loss
+        - Thermal noise
+        - Receiver noise figure
+
+    Excludes:
+        - Shadowing
+        - Fast fading
+        - Interference
+
     Returns:
-        float: Data rate in bps.
+        data_rate_bps
     """
+
+    distance_km = max(distance * 1e-3, 1e-6)
+
     if path_loss_model == "macro":
-        path_loss = 128.1 + 37.6 * np.log10(max(distance * 1e-3, 1e-6))  # Avoid log(0)
+        path_loss_db = 128.1 + 37.6 * np.log10(distance_km)
+
     elif path_loss_model == "micro":
-        path_loss = 140.7 + 36.7 * np.log10(max(distance * 1e-3, 1e-6))
+        path_loss_db = 140.7 + 36.7 * np.log10(distance_km)
+
     else:
         raise ValueError("Invalid path loss model")
 
-    received_power = transmission_power - path_loss
-    noise_power_linear = 10 ** ((noise_power - 30) / 10)
-    received_power_linear = 10 ** ((received_power - 30) / 10)
+    # Received power (dBm)
+    rx_power_dbm = transmission_power - path_loss_db
 
-    # Calculate the data rate using Shannon-Hartley theorem
-    snr = max(
-        received_power_linear / noise_power_linear, 1e-9
-    )  # Avoid division by zero
-    data_rate = allocated_spectrum * np.log2(1 + snr)
-    return data_rate
+    # Thermal noise power
+    noise_power_dbm = noise_power + 10 * np.log10(allocated_spectrum) + noise_figure_db
+
+    # SNR (dB)
+    snr_db = rx_power_dbm - noise_power_dbm
+
+    # SNR (linear)
+    snr_linear = 10 ** (snr_db / 10)
+
+    # Shannon capacity
+    data_rate_bps = allocated_spectrum * np.log2(1 + snr_linear)
+
+    return data_rate_bps

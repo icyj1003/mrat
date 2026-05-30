@@ -33,7 +33,9 @@ class RandomDeliveryPolicy(DeliveryPolicy):
     def act(self, states, masks, projection=None):
         super().act()
         logits = (
-            torch.rand(self.num_agents, self.num_actions, self.action_dim)
+            torch.rand(self.num_agents, self.num_actions, self.action_dim).to(
+                states.device
+            )
             + masks * -1e10
         )
         distribution = torch.distributions.Categorical(logits=logits)
