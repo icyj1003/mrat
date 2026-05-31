@@ -90,7 +90,8 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
             action_dim=2,
             state_dim=env.state_dim,
             hidden_dim=args.hidden_dim,
-            lr=args.lr,
+            actor_lr=args.actor_lr,
+            critic_lr=args.critic_lr,
             num_epochs=args.num_epoch,
             clip_range=args.clip_range,
             gamma=args.gamma,
@@ -118,6 +119,7 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
         next_states,
         dones,
         violations,
+        active_masks,
     ):
         super().store_transition()
         self.agent.buffer.add(
@@ -129,6 +131,7 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
             next_states,
             dones,
             violations,
+            active_masks,
         )
 
     def train(self, *args, **kwargs):
@@ -152,7 +155,8 @@ class RATSelection(DeliveryPolicy):
             action_dim=self.num_rats + 1,  # +1 for idling action
             state_dim=env.state_dim,
             hidden_dim=args.hidden_dim,
-            lr=args.lr,
+            actor_lr=args.actor_lr,
+            critic_lr=args.critic_lr,
             num_epochs=args.num_epoch,
             clip_range=args.clip_range,
             gamma=args.gamma,
@@ -302,6 +306,7 @@ class RATSelection(DeliveryPolicy):
         next_states,
         dones,
         violations,
+        active_masks,
     ):
         super().store_transition()
         self.agent.buffer.add(
@@ -313,6 +318,7 @@ class RATSelection(DeliveryPolicy):
             next_states,
             dones,
             violations,
+            active_masks,
         )
 
     def train(self, *args, **kwargs):

@@ -51,7 +51,9 @@ def parse_args():
     parser.add_argument(
         "--hidden_dim", type=int, default=64, help="Hidden dimension size"
     )
-    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--actor_lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--critic_lr", type=float, default=1e-3, help="Learning rate")
+
     parser.add_argument("--num_epoch", type=int, default=5, help="Number of epochs")
     parser.add_argument(
         "--clip_range",

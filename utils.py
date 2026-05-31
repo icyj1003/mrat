@@ -20,19 +20,26 @@ def log_and_collect(writer, env, episode):
     )
     active_indices = np.where(active_mask)[0]
 
+    def _safe_mean(values, default=0.0):
+        values = np.asarray(values)
+        if values.size == 0:
+            return float(default)
+        return float(np.mean(values))
+
     # cumulative_reward
-    cumulative_reward = np.sum(env.rewards_track)
+    cumulative_reward = float(np.sum(env.rewards_track))
 
     # delay per segment
     delay_per_segment = (
-        np.mean(
-            env.delay[active_indices] / env.num_code_min[env.requested[active_indices]]
+        _safe_mean(
+            env.delay[active_indices]
+            / np.maximum(env.num_code_min[env.requested[active_indices]], 1e-8)
         )
         * 1000
     )  # to ms
 
     # cost per bit
-    cost_per_bit = np.mean(
+    cost_per_bit = _safe_mean(
         env.cost[active_indices]
         / np.maximum(env.collected[active_indices] * env.code_size, 1e-8)
     )
@@ -45,7 +52,7 @@ def log_and_collect(writer, env, episode):
 
     # deadline violation
     mean_deadline_violation = np.clip(
-        np.mean(
+        _safe_mean(
             env.delay[active_indices]
             - env.delivery_deadline[env.requested[active_indices]]
         ),
@@ -54,7 +61,7 @@ def log_and_collect(writer, env, episode):
     )
 
     # violation ratio
-    violation_ratio = np.mean(
+    violation_ratio = _safe_mean(
         env.delay[active_indices] > env.delivery_deadline[env.requested[active_indices]]
     )
 

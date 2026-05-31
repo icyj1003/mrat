@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -27,7 +28,6 @@ from policy.selection_policy import (
 from utils import aggregate_metrics, get_environment, get_logger, log_and_collect
 
 if __name__ == "__main__":
-    # Parse command line arguments
     args = parse_args()
 
     if args.cuda and not torch.cuda.is_available():
@@ -37,18 +37,13 @@ if __name__ == "__main__":
         "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
     )
 
-    # set random seed
     torch.manual_seed(args.seed)
     if args.device.type == "cuda":
         torch.cuda.manual_seed_all(args.seed)
 
-    # Setup logger
     current, writer = get_logger(args)
-
-    # Get the environment
     env = get_environment(args)
 
-    # Initialize delivery policies
     if args.delivery_policy == "mappo":
         delivery_model = MAPPODeliveryPolicy(
             args,
@@ -91,26 +86,23 @@ if __name__ == "__main__":
         delivery_model = RandomDeliveryPolicy(
             num_agents=args.num_vehicles,
             num_actions=env.num_rats,
-            action_dim=2,  # Assuming action_dim is 2 for the delivery policy
+            action_dim=2,
         )
     else:
         raise ValueError(f"Unknown delivery policy: {args.delivery_policy}")
 
-    # Compute the total episodes: include training only for learning policies
     total_episodes = (
         (args.training_episodes + args.evaluation_episodes)
         if args.delivery_policy in ["mappo", "drl_selective"]
         else args.evaluation_episodes
     )
 
-    # evaluation metrics tracking
     infos = []
     workload = {}
+    accumulate_reward_track = []
+    activated_links_track = []
 
-    # Begin training loop
     for episode in tqdm(range(total_episodes), desc="Running", unit="episode"):
-        # At Large time-scale:
-        # Step 1: Run the vehicle selection policy here
         if args.vehicle_selection_policy == "gtvs_min1":
             caching_vehicle = GTVS(env, min_vehicles=1)
         elif args.vehicle_selection_policy == "gtvs_min2":
@@ -124,8 +116,6 @@ if __name__ == "__main__":
         else:
             caching_vehicle = no_vehicle_selection(env)
 
-        # Step 2: Make caching decisions
-        # initialize caching policy
         if args.cache_policy == "heuristic":
             cache_actions = heuristic_cache_placement(env)
         elif args.cache_policy == "heuristic_no_deadline":
@@ -164,17 +154,16 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unknown cache policy: {args.cache_policy}")
 
-        # Overwrite the cache states in the environment before performing the small step
         if args.cache_policy == "split_non_redundant":
             env.large_step(cache_actions, caching_vehicle, vehicle_cache_actions)
         else:
             env.large_step(cache_actions, caching_vehicle)
 
-        # Small time-scale:
-        # Run the multi-agent delivery policy here
         while not env.is_small_done():
+            active_mask = getattr(
+                env, "active_vehicle_mask", np.ones(args.num_vehicles, dtype=bool)
+            )
 
-            # Convert to tensor
             state_tensor = torch.tensor(
                 env.states, dtype=torch.float32, device=args.device
             )
@@ -182,19 +171,22 @@ if __name__ == "__main__":
                 env.masks, dtype=torch.float32, device=args.device
             )
 
-            # MAPPO Policy action selection
-            actions, log_probs = delivery_model.act(
-                state_tensor,  # num_agents x state_dim
-                mask_tensor,  # num_agents x num_actions
-            )
-
-            # Reshape action to match the environment
+            actions, log_probs = delivery_model.act(state_tensor, mask_tensor)
             reshaped_actions = actions.view(args.num_vehicles, env.num_rats)
 
-            # Step the environment
+            active_indices = np.where(active_mask)[0]
+            if len(active_indices) > 0:
+                per_vehicle_action_mean = (
+                    reshaped_actions[active_indices].float().mean(dim=1)
+                )
+                activated_links_track.append(
+                    float(per_vehicle_action_mean.mean().item())
+                )
+            else:
+                activated_links_track.append(0.0)
+
             next_states, rewards, dones, violations = env.small_step(reshaped_actions)
 
-            # Convert to tensor
             reward_tensor = torch.tensor(
                 rewards, dtype=torch.float32, device=args.device
             ).view(-1, 1)
@@ -207,20 +199,22 @@ if __name__ == "__main__":
             next_state_tensor = torch.tensor(
                 next_states, dtype=torch.float32, device=args.device
             )
+            active_mask_tensor = torch.tensor(
+                active_mask, dtype=torch.float32, device=args.device
+            ).view(-1, 1)
 
-            # Store the transition in the delivery model
             delivery_model.store_transition(
-                state_tensor,  # num_agents x state_dim
-                mask_tensor,  # num_agents x num_actions
-                reshaped_actions,  # num_agents x num_actions
-                log_probs,  # num_agents x num_actions
-                reward_tensor,  # num_agents x 1
-                next_state_tensor,  # num_agents x state_dim
-                done_tensor,  # num_agents x 1
-                violation_tensor,  # num_agents x 1
+                state_tensor,
+                mask_tensor,
+                reshaped_actions,
+                log_probs,
+                reward_tensor,
+                next_state_tensor,
+                done_tensor,
+                violation_tensor,
+                active_mask_tensor,
             )
 
-            # Update the delivery model only for learning policies
             if (
                 args.delivery_policy in ["mappo", "drl_selective"]
                 and episode > 0
@@ -229,10 +223,8 @@ if __name__ == "__main__":
                 if episode < args.training_episodes:
                     delivery_model.train()
 
-        # update workload
         workload.update({episode: env.load_ratios_track})
 
-        # Collect episode information
         infos.append(
             log_and_collect(
                 writer,
@@ -241,20 +233,48 @@ if __name__ == "__main__":
             )
         )
         infos[-1]["num_caching_vehicles"] = len(caching_vehicle)
-        # print(infos[-1]["episode_length"])
-        # print(infos[-1]["violation_ratio"])
 
-        # Reset the environment
+        accumulate_reward_track.append(
+            infos[-1]["cumulative_reward"] / env.num_vehicles
+        )
+
+        try:
+            window = 100
+            if len(accumulate_reward_track) > 0:
+                moving_avg = float(np.mean(accumulate_reward_track[-window:]))
+            else:
+                moving_avg = 0.0
+        except Exception:
+            moving_avg = 0.0
+
+        if writer is not None:
+            writer.add_scalar(f"log/reward_moving_avg", moving_avg, episode)
+
+        try:
+            avg_activated_links = (
+                float(np.mean(activated_links_track))
+                if len(activated_links_track) > 0
+                else 0.0
+            )
+        except Exception:
+            avg_activated_links = 0.0
+
+        if writer is not None:
+            writer.add_scalar(
+                f"log/episode_avg_activated_links",
+                avg_activated_links,
+                episode,
+            )
+
+        activated_links_track = []
         env.reset()
 
-    # Aggregate the evaluation metrics
     evaluate = aggregate_metrics(infos[-args.evaluation_episodes :])
     evaluate["num_vehicles"] = args.num_vehicles
     evaluate["num_edges"] = args.num_edges
     evaluate["num_items"] = args.num_items
     evaluate["name"] = args.name
 
-    # Save the model and metrics
     torch.save(
         {
             "args": args,
@@ -263,15 +283,13 @@ if __name__ == "__main__":
             "infos": infos,
             "workload": workload,
         },
-        f"runs/{current}_{args.name}/model.pth",  # Save the model with the current time and name
+        f"runs/{current}_{args.name}/model.pth",
     )
 
-    # Print the evaluation metrics
     print(f"[{current}] Evaluation Metrics {args.name} ===========================")
     for key, value in evaluate.items():
         print(f"{key}: {value}")
 
-    # Write evaluation metrics to ./out.out
     with open("./out.out", "a") as f:
         f.write(
             f"[{current}] Evaluation Metrics {args.name} ===========================\n"

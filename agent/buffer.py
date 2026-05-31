@@ -15,6 +15,7 @@ class MARolloutBuffer:
         self.next_states = []
         self.dones = []
         self.violations = []
+        self.active_masks = []
         self.device = device
 
     def add(
@@ -27,6 +28,7 @@ class MARolloutBuffer:
         next_states,  # tensor: num_agents x state_dim
         dones,  # tensor: num_agents x 1
         violations,  # tensor: num_agents x 1
+        active_masks,  # tensor: num_agents x 1
     ):
         self.states.append(states)
         self.masks.append(masks)
@@ -36,6 +38,7 @@ class MARolloutBuffer:
         self.next_states.append(next_states)
         self.dones.append(dones)
         self.violations.append(violations)
+        self.active_masks.append(active_masks)
 
     def get(self):
         stack_dim = 1  # put the trajectory length behind the number of agents
@@ -64,6 +67,9 @@ class MARolloutBuffer:
             torch.stack(self.violations, dim=stack_dim).to(
                 self.device
             ),  # trajectory length x num_agents x 1
+            torch.stack(self.active_masks, dim=stack_dim).to(
+                self.device
+            ),  # trajectory length x num_agents x 1
         )
 
     def clear(self):
@@ -75,6 +81,7 @@ class MARolloutBuffer:
         self.next_states = []
         self.dones = []
         self.violations = []
+        self.active_masks = []
 
     def __len__(self):
         return len(self.states)
@@ -94,6 +101,7 @@ class RolloutBuffer:
         self.next_states = []
         self.dones = []
         self.violations = []
+        self.active_masks = []
         self.device = device
 
     def add(

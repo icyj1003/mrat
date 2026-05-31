@@ -16,7 +16,8 @@ class MAPPO:
         action_dim,
         state_dim,
         hidden_dim=64,
-        lr=3e-4,
+        actor_lr=3e-4,
+        critic_lr=3e-4,
         num_epochs=10,
         clip_range=0.2,
         gamma=0.99,
@@ -41,7 +42,8 @@ class MAPPO:
         self.action_dim = action_dim
         self.state_dim = state_dim
         self.hidden_dim = hidden_dim
-        self.lr = lr
+        self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
         self.num_epochs = num_epochs
         self.clip_range = clip_range
         self.gamma = gamma
@@ -63,8 +65,8 @@ class MAPPO:
 
         self.optimizer = torch.optim.Adam(
             [
-                {"params": self.actor.parameters(), "lr": self.lr},
-                {"params": self.critic.parameters(), "lr": self.lr},
+                {"params": self.actor.parameters(), "lr": self.actor_lr},
+                {"params": self.critic.parameters(), "lr": self.critic_lr},
             ]
         )
 
@@ -72,20 +74,42 @@ class MAPPO:
         self.global_step = 0
 
     def act(self, states, masks):
-        # Batch actor inference across agents for speed.
+        # Batch actor inference only for active agents.
         states = torch.stack([state.to(self.device) for state in states], dim=0)
         masks = torch.stack([mask.to(self.device) for mask in masks], dim=0)
 
+        active_mask = states[:, -1] > 0.5
+        active_indices = torch.where(active_mask)[0]
+
+        actions = torch.zeros(
+            states.size(0), self.num_actions, dtype=torch.long, device=self.device
+        )
+        log_probs = torch.zeros(
+            states.size(0), self.num_actions, dtype=torch.float32, device=self.device
+        )
+
+        if active_indices.numel() == 0:
+            return actions.cpu(), log_probs.cpu()
+
+        active_states = states[active_indices]
+        active_masks = masks[active_indices]
+
         # get the raw logits from the actor
-        logit = self.actor(states, masks)
+        logit = self.actor(active_states, active_masks)
         if logit.dim() == 4 and logit.size(0) == 1:
             logit = logit.squeeze(0)
 
         dist = torch.distributions.Categorical(logits=logit)
-        actions = dist.sample().detach()  # num_agents x num_actions
+        sampled_actions = dist.sample().detach()  # num_active x num_actions
 
         # calculate log probs
-        log_probs = dist.log_prob(actions).detach()  # num_agents x num_actions
+        sampled_log_probs = dist.log_prob(
+            sampled_actions
+        ).detach()  # num_active x num_actions
+
+        actions[active_indices] = sampled_actions
+        log_probs[active_indices] = sampled_log_probs
+
         return actions.cpu(), log_probs.cpu()
 
     def evaluate(self, state, mask, action):
@@ -147,23 +171,35 @@ class MAPPO:
             next_states,  # num_agents x trajectory length x state_dim
             dones,  # num_agents x trajectory length x 1
             violations,  # num_agents x trajectory length x 1
+            active_masks,  # num_agents x trajectory length x 1
         ) = self.buffer.get()
 
-        # Determine active agents from state last feature (active mask appended in env.states)
-        # states shape: (num_agents, traj_len, state_dim)
-        with torch.no_grad():
-            active_flags = (states[:, 0, -1].squeeze(-1) > 0.5).to(torch.bool)
+        num_agents = states.size(0)
+        if num_agents == 0:
+            self.buffer.clear()
+            return
+
+        active_agent_mask = active_masks[:, 0, 0].to(torch.bool)
+
+        # Shared reward over the active batch: mean only across active vehicles.
+        if self.use_lagrange:
+            adjusted_rewards = rewards - self.penalty_coeff * violations
+        else:
+            adjusted_rewards = rewards
+
+        active_count = int(active_agent_mask.sum().item())
+        if active_count > 0:
+            shared_reward = adjusted_rewards[active_agent_mask].mean(
+                dim=0, keepdim=True
+            )
+        else:
+            shared_reward = torch.zeros_like(adjusted_rewards[:1])
+        shared_rewards = shared_reward.expand_as(adjusted_rewards)
 
         list_advantages = []
         list_returns = []
-        active_indices = []
 
-        for agent_idx in range(self.num_agents):
-            if not active_flags[agent_idx]:
-                # skip inactive agents (they are padded)
-                continue
-
-            active_indices.append(agent_idx)
+        for agent_idx in range(num_agents):
 
             # Get the state values from the target critics
             agent_values = self.critic_target(states[agent_idx]).detach()
@@ -176,15 +212,9 @@ class MAPPO:
                 [agent_values, next_agent_values[-1].unsqueeze(0)], dim=0
             )
 
-            # if using lagrangian penalty, apply it to the rewards (active agents only)
-            if self.use_lagrange:
-                rewards[agent_idx] = (
-                    rewards[agent_idx] - self.penalty_coeff * violations[agent_idx]
-                )
-
             # compute discounted returns, advantages
             agent_advantages, agent_returns = self.gae(
-                rewards[agent_idx], agent_values, dones[agent_idx]
+                shared_rewards[agent_idx], agent_values, dones[agent_idx]
             )
 
             # save the advantages and returns
@@ -201,18 +231,21 @@ class MAPPO:
         returns = torch.stack(list_returns, dim=0)
 
         # reshape dim 1 of all agents to create a joint dataset
-        # select only active agents for training dataset
-        active_states = states[active_indices]  # (num_active, T, state_dim)
-        active_masks = masks[active_indices]
-        active_actions = actions[active_indices]
-        active_log_probs = log_probs[active_indices]
-
-        joint_states = active_states.reshape(-1, self.state_dim)
-        joint_masks = active_masks.reshape(-1, self.num_actions, self.action_dim)
-        joint_actions = active_actions.reshape(-1, self.num_actions)
-        joint_log_probs = active_log_probs.reshape(-1, self.num_actions)
+        joint_states = states.reshape(-1, self.state_dim)
+        joint_masks = masks.reshape(-1, self.num_actions, self.action_dim)
+        joint_actions = actions.reshape(-1, self.num_actions)
+        joint_log_probs = log_probs.reshape(-1, self.num_actions)
         joint_advantages = advantages.reshape(-1, 1)
         joint_returns = returns.reshape(-1, 1)
+        joint_active_mask = active_masks.reshape(-1).to(torch.bool)
+
+        # filter out padded samples after flattening
+        joint_states = joint_states[joint_active_mask]
+        joint_masks = joint_masks[joint_active_mask]
+        joint_actions = joint_actions[joint_active_mask]
+        joint_log_probs = joint_log_probs[joint_active_mask]
+        joint_advantages = joint_advantages[joint_active_mask]
+        joint_returns = joint_returns[joint_active_mask]
 
         # create a single dataset to train the joint policy
         dataset = torch.utils.data.TensorDataset(
@@ -327,12 +360,7 @@ class MAPPO:
 
         # update the penalty coefficient if using lagrangian penalty
         if self.use_lagrange:
-            # compute mean violations over active agents only
-            if len(active_indices) > 0:
-                active_violations = violations[active_indices]
-                mean_violation = active_violations.mean()
-            else:
-                mean_violation = torch.tensor(0.0, device=violations.device)
+            mean_violation = violations.mean()
             self.penalty_coeff += self.penalty_lr * (mean_violation).detach()
             self.penalty_coeff = max(0, min(self.penalty_coeff, 10))
 
