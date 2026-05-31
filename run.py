@@ -159,6 +159,7 @@ if __name__ == "__main__":
         else:
             env.large_step(cache_actions, caching_vehicle)
 
+        actions_track = []
         while not env.is_small_done():
             active_mask = getattr(
                 env, "active_vehicle_mask", np.ones(args.num_vehicles, dtype=bool)
@@ -175,15 +176,8 @@ if __name__ == "__main__":
             reshaped_actions = actions.view(args.num_vehicles, env.num_rats)
 
             active_indices = np.where(active_mask)[0]
-            if len(active_indices) > 0:
-                per_vehicle_action_mean = (
-                    reshaped_actions[active_indices].float().mean(dim=1)
-                )
-                activated_links_track.append(
-                    float(per_vehicle_action_mean.mean().item())
-                )
-            else:
-                activated_links_track.append(0.0)
+
+            actions_track.append(reshaped_actions[active_indices].cpu().numpy())
 
             next_states, rewards, dones, violations = env.small_step(reshaped_actions)
 
@@ -225,6 +219,30 @@ if __name__ == "__main__":
 
         workload.update({episode: env.load_ratios_track})
 
+        # compute mean used links for each vehicle:
+        # for each timestep, for each vehicle, sum the action
+        # then for each vehicle sum across timesteps and divide by the vehicle delay (which is the number of timesteps it was active)
+        current_avg_links = []
+        for vehicle_id in range(args.num_vehicles):
+            total_used_links = 0
+            total_active_timesteps = 0
+            for t in range(len(actions_track)):
+                if (
+                    vehicle_id < actions_track[t].shape[0]
+                ):  # Check if vehicle_id is valid
+                    used_links = np.sum(actions_track[t][vehicle_id])
+                    total_used_links += used_links
+                    if used_links > 0:
+                        total_active_timesteps += 1
+
+            current_avg_links.append(
+                total_used_links / total_active_timesteps
+                if total_active_timesteps > 0
+                else 0
+            )
+
+        activated_links_track.append(np.mean(current_avg_links))
+
         infos.append(
             log_and_collect(
                 writer,
@@ -240,7 +258,7 @@ if __name__ == "__main__":
 
         try:
             window = 100
-            if len(accumulate_reward_track) > 0:
+            if len(accumulate_reward_track) > window:
                 moving_avg = float(np.mean(accumulate_reward_track[-window:]))
             else:
                 moving_avg = 0.0
@@ -248,21 +266,23 @@ if __name__ == "__main__":
             moving_avg = 0.0
 
         if writer is not None:
-            writer.add_scalar(f"log/reward_moving_avg", moving_avg, episode)
+            if moving_avg != 0.0:
+                writer.add_scalar(f"log/reward_moving_avg", moving_avg, episode)
 
-        try:
-            avg_activated_links = (
-                float(np.mean(activated_links_track))
-                if len(activated_links_track) > 0
-                else 0.0
+            writer.add_scalar(
+                "log/episode_avg_cumulative_reward",
+                (
+                    accumulate_reward_track[-1]
+                    if len(accumulate_reward_track) > 0
+                    else infos[-1]["cumulative_reward"] / env.num_vehicles
+                ),
+                episode,
             )
-        except Exception:
-            avg_activated_links = 0.0
 
         if writer is not None:
             writer.add_scalar(
                 f"log/episode_avg_activated_links",
-                avg_activated_links,
+                activated_links_track[-1] if len(activated_links_track) > 0 else 0.0,
                 episode,
             )
 
@@ -274,6 +294,9 @@ if __name__ == "__main__":
     evaluate["num_edges"] = args.num_edges
     evaluate["num_items"] = args.num_items
     evaluate["name"] = args.name
+    evaluate["avg_activated_links"] = np.mean(
+        activated_links_track[-args.evaluation_episodes :]
+    )
 
     torch.save(
         {
@@ -282,6 +305,7 @@ if __name__ == "__main__":
             "evaluate": evaluate,
             "infos": infos,
             "workload": workload,
+            "links": activated_links_track,
         },
         f"runs/{current}_{args.name}/model.pth",
     )

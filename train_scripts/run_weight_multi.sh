@@ -1,0 +1,11 @@
+python run.py --name multi55  --cost_weight 0.5 --delay_weight 0.5 --cuda
+python run.py --name multi01  --cost_weight 0.0 --delay_weight 1.0 --cuda
+python run.py --name multi28  --cost_weight 0.2 --delay_weight 0.8 --cuda
+python run.py --name multi46  --cost_weight 0.4 --delay_weight 0.6 --cuda
+python run.py --name multi64  --cost_weight 0.6 --delay_weight 0.4 --cuda
+python run.py --name multi82  --cost_weight 0.8 --delay_weight 0.2 --cuda
+python run.py --name multi10  --cost_weight 1.0 --delay_weight 0.0 --cuda
+python run.py --name multi19  --cost_weight 0.1 --delay_weight 0.9 --cuda
+python run.py --name multi37  --cost_weight 0.3 --delay_weight 0.7 --cuda
+python run.py --name multi73  --cost_weight 0.7 --delay_weight 0.3 --cuda
+python run.py --name multi91  --cost_weight 0.9 --delay_weight 0.1 --cuda

@@ -1,0 +1,11 @@
+python run.py --name single55  --cost_weight 0.5 --delay_weight 0.5 --cuda
+python run.py --name single01  --cost_weight 0.0 --delay_weight 1.0 --cuda
+python run.py --name single28  --cost_weight 0.2 --delay_weight 0.8 --cuda
+python run.py --name single46  --cost_weight 0.4 --delay_weight 0.6 --cuda
+python run.py --name single64  --cost_weight 0.6 --delay_weight 0.4 --cuda
+python run.py --name single82  --cost_weight 0.8 --delay_weight 0.2 --cuda
+python run.py --name single10  --cost_weight 1.0 --delay_weight 0.0 --cuda
+python run.py --name single19  --cost_weight 0.1 --delay_weight 0.9 --cuda
+python run.py --name single37  --cost_weight 0.3 --delay_weight 0.7 --cuda
+python run.py --name single73  --cost_weight 0.7 --delay_weight 0.3 --cuda
+python run.py --name single91  --cost_weight 0.9 --delay_weight 0.1 --cuda

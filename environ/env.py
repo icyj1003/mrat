@@ -68,7 +68,7 @@ class Environment:
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
-        cost_scale: float = 5e1,
+        cost_scale: float = 3e1,
         # (0.2, 0.8), (0.4, 0.6), (0.6, 0.4), (0.8, 0.2)
         delay_weight: float = 0.5,
         cost_weight: float = 0.5,

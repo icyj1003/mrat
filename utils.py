@@ -32,8 +32,7 @@ def log_and_collect(writer, env, episode):
     # delay per segment
     delay_per_segment = (
         _safe_mean(
-            env.delay[active_indices]
-            / np.maximum(env.num_code_min[env.requested[active_indices]], 1e-8)
+            env.delay[active_indices] / np.maximum(env.collected[active_indices], 1e-8)
         )
         * 1000
     )  # to ms
@@ -68,11 +67,11 @@ def log_and_collect(writer, env, episode):
     # v2v hit-ratio
     hit_rate = env.compute_hit_ratio()
 
-    writer.add_scalar(
-        f"log/cumulative_reward",
-        cumulative_reward,
-        episode,
-    )
+    # writer.add_scalar(
+    #     f"log/cumulative_reward",
+    #     cumulative_reward,
+    #     episode,
+    # )
 
     writer.add_scalar(
         f"log/delay_per_segment",
