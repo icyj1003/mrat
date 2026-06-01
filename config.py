@@ -11,7 +11,7 @@ def parse_args():
         "--vehicle_max",
         dest="num_vehicles",
         type=int,
-        default=30,
+        default=50,
         help="Maximum number of vehicles",
     )
     parser.add_argument(
@@ -98,7 +98,7 @@ def parse_args():
         help="Maximum delivery deadline",
     )
     parser.add_argument(
-        "--item_size_max", type=int, default=100, help="Maximum item size"
+        "--item_size_max", type=int, default=200, help="Maximum item size"
     )
     parser.add_argument(
         "--item_size_min", type=int, default=50, help="Minimum item size"
@@ -165,6 +165,16 @@ def parse_args():
         action="store_true",
         help="Remove edge cooperation for caching decisions",
     )
+    parser.add_argument(
+        "--bandwidth_allocation_scheme",
+        type=str,
+        default="capacity_limit",
+        choices=["fair_share", "capacity_limit"],
+        help=(
+            "Bandwidth allocation mode: fair_share divides bandwidth by active links; "
+            "capacity_limit uses fixed per-link bandwidth and projects overloaded actions"
+        ),
+    )
     # v2n_bandwidth_max: float = 100000000,
     # v2n_bandwidth: float = 1 * 1000000,
     # v2v_bandwidth_max: float = 100000000,
@@ -176,13 +186,13 @@ def parse_args():
     parser.add_argument(
         "--v2n_bandwidth_max",
         type=float,
-        default=20e6,
+        default=100e6,
         help="Maximum bandwidth for V2N communication",
     )
     parser.add_argument(
         "--v2v_bandwidth_max",
         type=float,
-        default=20e6,
+        default=30e6,
         help="Maximum bandwidth for V2V communication",
     )
     parser.add_argument(
@@ -194,7 +204,7 @@ def parse_args():
     parser.add_argument(
         "--v2i_wifi_bandwidth_max",
         type=float,
-        default=40e6,
+        default=80e6,
         help="Maximum bandwidth for V2I WiFi communication",
     )
     return parser.parse_args()

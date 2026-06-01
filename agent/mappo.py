@@ -364,6 +364,14 @@ class MAPPO:
             self.penalty_coeff += self.penalty_lr * (mean_violation).detach()
             self.penalty_coeff = max(0, min(self.penalty_coeff, 10))
 
+            # log the penalty coefficient
+            if self.writer is not None:
+                self.writer.add_scalar(
+                    f"{self.name}_penalty/penalty_coeff",
+                    self.penalty_coeff,
+                    self.global_step,
+                )
+
         # clear the buffer
         self.buffer.clear()
 

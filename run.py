@@ -222,26 +222,20 @@ if __name__ == "__main__":
         # compute mean used links for each vehicle:
         # for each timestep, for each vehicle, sum the action
         # then for each vehicle sum across timesteps and divide by the vehicle delay (which is the number of timesteps it was active)
-        current_avg_links = []
-        for vehicle_id in range(args.num_vehicles):
-            total_used_links = 0
-            total_active_timesteps = 0
-            for t in range(len(actions_track)):
-                if (
-                    vehicle_id < actions_track[t].shape[0]
-                ):  # Check if vehicle_id is valid
-                    used_links = np.sum(actions_track[t][vehicle_id])
-                    total_used_links += used_links
-                    if used_links > 0:
-                        total_active_timesteps += 1
 
-            current_avg_links.append(
-                total_used_links / total_active_timesteps
-                if total_active_timesteps > 0
-                else 0
+        actions_track = np.array(
+            actions_track
+        )  # shape: (timesteps, num_active_vehicles, num_rats)
+
+        mean_ep_activated_links = []
+        for vehicle_id in active_indices:
+            mean_vehicle_links = np.sum(
+                actions_track[: int(env.delay[vehicle_id]), vehicle_id, :], axis=-1
             )
-
-        activated_links_track.append(np.mean(current_avg_links))
+            mean_ep_activated_links.append(
+                np.mean(mean_vehicle_links) if len(mean_vehicle_links) > 0 else 0.0
+            )
+        activated_links_track.append(np.mean(mean_ep_activated_links))
 
         infos.append(
             log_and_collect(
@@ -253,7 +247,7 @@ if __name__ == "__main__":
         infos[-1]["num_caching_vehicles"] = len(caching_vehicle)
 
         accumulate_reward_track.append(
-            infos[-1]["cumulative_reward"] / env.num_vehicles
+            infos[-1]["cumulative_reward"] / env.active_num_vehicles
         )
 
         try:
@@ -286,7 +280,6 @@ if __name__ == "__main__":
                 episode,
             )
 
-        activated_links_track = []
         env.reset()
 
     evaluate = aggregate_metrics(infos[-args.evaluation_episodes :])

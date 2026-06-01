@@ -42,11 +42,11 @@ class Environment:
         v2v_pc5_coverage: float = 100,
         # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
-        v2n_bandwidth: float = 1 * 1e6,
+        v2n_bandwidth: float = 5 * 1e6,
         v2v_bandwidth_max: float = 100e6,
-        v2v_bandwidth: float = 1e6,
+        v2v_bandwidth: float = 2e6,
         v2i_pc5_bandwidth_max: float = 20e6,
-        v2i_pc5_bandwidth: float = 1e6,
+        v2i_pc5_bandwidth: float = 2e6,
         v2i_wifi_bandwidth_max: float = 80e6,
         v2i_wifi_bandwidth: float = 5e6,
         # Transmission Cost
@@ -76,6 +76,7 @@ class Environment:
         disable_wifi: bool = False,
         disable_pc5: bool = False,
         remove_edge_cooperation: bool = False,
+        bandwidth_allocation_scheme: str = "fair_share",
     ):
         # Set core meta-parameters
         self.dt = dt
@@ -193,6 +194,7 @@ class Environment:
 
         # Edge cooperation flag
         self.remove_edge_cooperation = remove_edge_cooperation
+        self.bandwidth_allocation_scheme = bandwidth_allocation_scheme
 
     # Initialization Methods
     def reset(self) -> None:
@@ -771,8 +773,12 @@ class Environment:
         # increment the step counter
         self.steps += 1
 
-        # Fair-share bandwidth allocation: divide each RAT budget by the number of
-        # active connections that selected that RAT in the current step.
+        if self.bandwidth_allocation_scheme == "capacity_limit":
+            if not isinstance(actions, torch.Tensor):
+                actions = torch.tensor(actions, dtype=torch.long)
+            actions = self.bandwidth_constraints_handler(actions)
+
+        # Convert to numpy for the per-link delivery simulation.
         if isinstance(actions, torch.Tensor):
             action_array = actions.detach().cpu().numpy()
         else:
@@ -782,38 +788,51 @@ class Environment:
             action_array = action_array.reshape(self.num_vehicles, self.num_rats)
 
         active_delivery_mask = self.delivery_done == 0
-        v2n_count = max(
-            int(np.sum((action_array[:, 0] == 1) & active_delivery_mask)), 1
-        )
-        v2v_count = max(
-            int(np.sum((action_array[:, 1] == 1) & active_delivery_mask)), 1
-        )
-        fair_v2n_bandwidth = self.v2n_bandwidth_max / v2n_count
-        fair_v2v_bandwidth = self.v2v_bandwidth_max / v2v_count
 
-        fair_v2i_pc5_bandwidth = np.full(self.num_edges, self.v2i_pc5_bandwidth_max)
-        fair_v2i_wifi_bandwidth = np.full(self.num_edges, self.v2i_wifi_bandwidth_max)
+        if self.bandwidth_allocation_scheme == "fair_share":
+            # Fair-share bandwidth allocation: divide each RAT budget by the number
+            # of active connections that selected that RAT in the current step.
+            v2n_count = max(
+                int(np.sum((action_array[:, 0] == 1) & active_delivery_mask)), 1
+            )
+            v2v_count = max(
+                int(np.sum((action_array[:, 1] == 1) & active_delivery_mask)), 1
+            )
+            fair_v2n_bandwidth = self.v2n_bandwidth_max / v2n_count
+            fair_v2v_bandwidth = self.v2v_bandwidth_max / v2v_count
 
-        for edge_index in range(self.num_edges):
-            edge_mask = (
-                (action_array[:, 2] == 1)
-                & (self.local_of == edge_index)
-                & active_delivery_mask
-                & (self.out == 0)
+            fair_v2i_pc5_bandwidth = np.full(self.num_edges, self.v2i_pc5_bandwidth_max)
+            fair_v2i_wifi_bandwidth = np.full(
+                self.num_edges, self.v2i_wifi_bandwidth_max
             )
-            pc5_count = max(int(np.sum(edge_mask)), 1)
-            fair_v2i_pc5_bandwidth[edge_index] = self.v2i_pc5_bandwidth_max / pc5_count
 
-            wifi_mask = (
-                (action_array[:, 3] == 1)
-                & (self.local_of == edge_index)
-                & active_delivery_mask
-                & (self.out == 0)
-            )
-            wifi_count = max(int(np.sum(wifi_mask)), 1)
-            fair_v2i_wifi_bandwidth[edge_index] = (
-                self.v2i_wifi_bandwidth_max / wifi_count
-            )
+            for edge_index in range(self.num_edges):
+                edge_mask = (
+                    (action_array[:, 2] == 1)
+                    & (self.local_of == edge_index)
+                    & active_delivery_mask
+                    & (self.out == 0)
+                )
+                pc5_count = max(int(np.sum(edge_mask)), 1)
+                fair_v2i_pc5_bandwidth[edge_index] = (
+                    self.v2i_pc5_bandwidth_max / pc5_count
+                )
+
+                wifi_mask = (
+                    (action_array[:, 3] == 1)
+                    & (self.local_of == edge_index)
+                    & active_delivery_mask
+                    & (self.out == 0)
+                )
+                wifi_count = max(int(np.sum(wifi_mask)), 1)
+                fair_v2i_wifi_bandwidth[edge_index] = (
+                    self.v2i_wifi_bandwidth_max / wifi_count
+                )
+        else:
+            fair_v2n_bandwidth = self.v2n_bandwidth
+            fair_v2v_bandwidth = self.v2v_bandwidth
+            fair_v2i_pc5_bandwidth = np.full(self.num_edges, self.v2i_pc5_bandwidth)
+            fair_v2i_wifi_bandwidth = np.full(self.num_edges, self.v2i_wifi_bandwidth)
 
         # actions = np.ones((self.num_vehicles, self.num_rats))
 
