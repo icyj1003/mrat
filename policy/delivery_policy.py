@@ -122,7 +122,12 @@ def _sample_projected_actions(
     active_mask = states[:, -1] > 0.5
     active_indices = torch.where(active_mask)[0]
 
-    actions = torch.zeros(states.size(0), 1, dtype=torch.long, device=device)
+    actions = torch.zeros(
+        states.size(0),
+        action_table.size(1),
+        dtype=torch.long,
+        device=device,
+    )
     log_probs = torch.zeros(states.size(0), 1, dtype=torch.float32, device=device)
 
     if active_indices.numel() == 0:
@@ -150,9 +155,9 @@ def _sample_projected_actions(
     full_actions[active_indices] = sampled_actions
 
     if projection is not None:
-        full_actions = projection(full_actions)
+        full_actions = projection(full_actions).to(device=device)
 
-    projected_active_actions = full_actions[active_indices]
+    projected_active_actions = full_actions[active_indices.to(device)]
     projected_action_ids = torch.tensor(
         [
             action_to_id[tuple(action.tolist())]
@@ -164,7 +169,7 @@ def _sample_projected_actions(
 
     sampled_log_probs = dist.log_prob(projected_action_ids).detach()
 
-    actions[active_indices] = projected_action_ids
+    actions[active_indices] = projected_active_actions
     log_probs[active_indices] = sampled_log_probs
 
     return actions.cpu(), log_probs.cpu()
@@ -275,7 +280,11 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
     def act(self, states, masks, projection=None):
         super().act()
         action_masks = _rat_mask_to_action_mask(masks)
-        if projection is None and getattr(self.env, "bandwidth_allocation_scheme", "fair_share") == "capacity_limit":
+        if (
+            projection is None
+            and getattr(self.env, "bandwidth_allocation_scheme", "fair_share")
+            == "capacity_limit"
+        ):
             projection = self.env.bandwidth_constraints_handler
         return _sample_projected_actions(
             self.agent.actor,
@@ -354,7 +363,11 @@ class RATSelection(DeliveryPolicy):
     def act(self, states, masks, projection=None):
         super().act()
         action_masks = _selection_mask_to_action_mask(masks)
-        if projection is None and getattr(self.env, "bandwidth_allocation_scheme", "fair_share") == "capacity_limit":
+        if (
+            projection is None
+            and getattr(self.env, "bandwidth_allocation_scheme", "fair_share")
+            == "capacity_limit"
+        ):
             projection = self.env.bandwidth_constraints_handler
         return _sample_projected_actions(
             self.agent.actor,

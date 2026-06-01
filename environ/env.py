@@ -483,14 +483,26 @@ class Environment:
 
         # If the delivery is done, set the deadline cost to 0
         deadline_cost = deadline_cost * (1 - self.delivery_done.reshape(-1, 1))
+        if hasattr(self, "active_vehicle_mask"):
+            deadline_cost[~self.active_vehicle_mask.reshape(-1, 1)] = 0
         return deadline_cost
 
     def compute_utility(
         self,
     ) -> np.ndarray:
 
+        if len(self.utility_track) == 0:
+            return 0.0, 0.0, 0.0, 0.0
+
+        active_mask = getattr(
+            self, "active_vehicle_mask", np.ones(self.num_vehicles, dtype=bool)
+        )
+        if not np.any(active_mask):
+            return 0.0, 0.0, 0.0, 0.0
+
         utility = (
-            np.array(self.utility_track).sum(axis=0) / self.delay.reshape(-1, 1)
+            np.array(self.utility_track)[:, active_mask, :].sum(axis=0)
+            / np.maximum(self.delay[active_mask].reshape(-1, 1), 1e-8)
         ).mean(axis=0)
         v2n_u = utility[0]
         v2v_u = utility[1]

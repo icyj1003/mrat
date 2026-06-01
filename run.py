@@ -268,7 +268,7 @@ if __name__ == "__main__":
                 (
                     accumulate_reward_track[-1]
                     if len(accumulate_reward_track) > 0
-                    else infos[-1]["cumulative_reward"] / env.num_vehicles
+                    else infos[-1]["cumulative_reward"] / max(env.active_num_vehicles, 1)
                 ),
                 episode,
             )

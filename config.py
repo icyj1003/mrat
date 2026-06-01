@@ -11,7 +11,7 @@ def parse_args():
         "--vehicle_max",
         dest="num_vehicles",
         type=int,
-        default=50,
+        default=30,
         help="Maximum number of vehicles",
     )
     parser.add_argument(
@@ -83,7 +83,7 @@ def parse_args():
         "--deadline_min",
         dest="delivery_deadline_min",
         type=int,
-        default=30,
+        default=5,
         help="Minimum delivery deadline",
     )
     # python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150
