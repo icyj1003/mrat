@@ -18,9 +18,9 @@ def zipf(num_items, alpha) -> np.ndarray:
 
 
 def compute_data_rate(
-    allocated_spectrum: float,
-    transmission_power: float,
-    noise_power: float,
+    allocated_spectrum: float,  # in Hz
+    transmission_power: float,  # in dBm e.g., 23 dBm for V2V, 46 dBm for V2N
+    noise_power: float,  # -174 i dont know the unit but it is a constant
     distance: Union[float, np.ndarray],
     path_loss_model: Literal["macro", "micro"] = "macro",
 ) -> Union[float, np.ndarray]:
