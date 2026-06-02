@@ -43,7 +43,7 @@ class Environment:
         # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
         v2n_bandwidth: float = 5 * 1e6,
-        v2v_bandwidth_max: float = 100e6,
+        v2v_bandwidth_max: float = 20e6,
         v2v_bandwidth: float = 2e6,
         v2i_pc5_bandwidth_max: float = 20e6,
         v2i_pc5_bandwidth: float = 2e6,
@@ -1157,12 +1157,13 @@ class Environment:
         active_mask = self.active_vehicle_mask
         if np.any(active_mask):
             active_rewards_mean = float(np.mean(rewards[active_mask]))
-            # print(
-            #     "Cost Term Mean:",
-            #     np.mean(cost_term[active_mask]),
-            #     "Delay Term Mean:",
-            #     np.mean(delay_term[active_mask]),
-            # )
+            print(
+                "Cost Term Mean:",
+                np.mean(cost_term[active_mask]),
+                "Delay Term Mean:",
+                np.mean(delay_term[active_mask]),
+            )
+            pass
         else:
             active_rewards_mean = 0.0
         self.rewards_track.append(active_rewards_mean)
