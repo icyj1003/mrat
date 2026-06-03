@@ -42,17 +42,17 @@ class Environment:
         v2v_pc5_coverage: float = 100,
         # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
-        v2n_bandwidth: float = 5 * 1e6,
+        v2n_bandwidth: float = 5e6,
         v2v_bandwidth_max: float = 20e6,
-        v2v_bandwidth: float = 2e6,
+        v2v_bandwidth: float = 5e6,
         v2i_pc5_bandwidth_max: float = 20e6,
-        v2i_pc5_bandwidth: float = 2e6,
-        v2i_wifi_bandwidth_max: float = 80e6,
+        v2i_pc5_bandwidth: float = 5e6,
+        v2i_wifi_bandwidth_max: float = 40e6,
         v2i_wifi_bandwidth: float = 5e6,
         # Transmission Cost
         v2n_cost: float = 10,
         v2i_pc5_cost: float = 1,
-        v2i_wifi_cost: float = 0.8,
+        v2i_wifi_cost: float = 0.1,
         v2v_cost: float = 0.3,
         # Transmission Power (dBm)
         v2n_transmission_power: float = 43,
@@ -64,7 +64,7 @@ class Environment:
         i2i_data_rate: float = 100e6,
         i2n_data_rate: float = 150e6,
         i2i_cost: float = 0.1,
-        i2n_cost: float = 8,
+        i2n_cost: float = 0.8,
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
@@ -108,7 +108,7 @@ class Environment:
             ],
             axis=1,
         )
-        self.bs_positions = (self.road_length / 2, self.road_width / 2 + 200)
+        self.bs_positions = (self.road_length / 2, self.road_width / 2 + 1000)
 
         # Content Coding
         self.code_size = code_size
@@ -785,11 +785,6 @@ class Environment:
         # increment the step counter
         self.steps += 1
 
-        if self.bandwidth_allocation_scheme == "capacity_limit":
-            if not isinstance(actions, torch.Tensor):
-                actions = torch.tensor(actions, dtype=torch.long)
-            actions = self.bandwidth_constraints_handler(actions)
-
         # Convert to numpy for the per-link delivery simulation.
         if isinstance(actions, torch.Tensor):
             action_array = actions.detach().cpu().numpy()
@@ -1129,15 +1124,14 @@ class Environment:
         # compute cost and delay terms
         delay_term = (
             -self.delay_weight
-            * self.delay_scale
+            * self.code_size
+            * 1000
+            # * self.delay_scale
             * new_delay
             / self.item_size[self.requested]
         )  # delay per bit
         cost_term = (
-            -self.cost_weight
-            * self.cost_scale
-            * new_cost
-            / self.item_size[self.requested]
+            -self.cost_weight * new_cost / self.item_size[self.requested]
         )  # cost per bit
 
         # compute the reward, dones, and violations
@@ -1157,16 +1151,21 @@ class Environment:
         active_mask = self.active_vehicle_mask
         if np.any(active_mask):
             active_rewards_mean = float(np.mean(rewards[active_mask]))
-            print(
-                "Cost Term Mean:",
-                np.mean(cost_term[active_mask]),
-                "Delay Term Mean:",
-                np.mean(delay_term[active_mask]),
-            )
-            pass
+            # print(
+            #     "Cost Term Mean:",
+            #     np.mean(cost_term[active_mask]),
+            #     "Delay Term Mean:",
+            #     np.mean(delay_term[active_mask]),
+            # )
+
         else:
             active_rewards_mean = 0.0
+
         self.rewards_track.append(active_rewards_mean)
+        rewards[active_mask] = (
+            rewards[active_mask]
+            + np.ones(rewards[active_mask].shape) * active_rewards_mean
+        )
 
         # update env
         self.update_velocity()

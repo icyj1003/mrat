@@ -172,7 +172,15 @@ if __name__ == "__main__":
                 env.masks, dtype=torch.float32, device=args.device
             )
 
-            actions, log_probs = delivery_model.act(state_tensor, mask_tensor)
+            if args.delivery_policy in ["mappo", "drl_selective"]:
+                actions, log_probs = delivery_model.act(state_tensor, mask_tensor)
+            else:
+                actions, log_probs = delivery_model.act(
+                    state_tensor,
+                    mask_tensor,
+                    projection=env.bandwidth_constraints_handler,
+                )
+
             reshaped_actions = actions.view(args.num_vehicles, env.num_rats)
 
             active_indices = np.where(active_mask)[0]
@@ -268,7 +276,8 @@ if __name__ == "__main__":
                 (
                     accumulate_reward_track[-1]
                     if len(accumulate_reward_track) > 0
-                    else infos[-1]["cumulative_reward"] / max(env.active_num_vehicles, 1)
+                    else infos[-1]["cumulative_reward"]
+                    / max(env.active_num_vehicles, 1)
                 ),
                 episode,
             )

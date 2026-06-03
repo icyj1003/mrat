@@ -19,7 +19,7 @@ def parse_args():
         "--vehicle_min",
         dest="num_vehicles_min",
         type=int,
-        default=10,
+        default=5,
         help="Minimum number of active vehicles sampled per episode",
     )
     parser.add_argument("--num_edges", type=int, default=4, help="Number of edges")
@@ -83,7 +83,7 @@ def parse_args():
         "--deadline_min",
         dest="delivery_deadline_min",
         type=int,
-        default=5,
+        default=30,
         help="Minimum delivery deadline",
     )
     # python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150
@@ -94,7 +94,7 @@ def parse_args():
         "--deadline_max",
         dest="delivery_deadline_max",
         type=int,
-        default=60,
+        default=100,
         help="Maximum delivery deadline",
     )
     parser.add_argument(
@@ -192,7 +192,7 @@ def parse_args():
     parser.add_argument(
         "--v2v_bandwidth_max",
         type=float,
-        default=30e6,
+        default=20e6,
         help="Maximum bandwidth for V2V communication",
     )
     parser.add_argument(
@@ -204,7 +204,7 @@ def parse_args():
     parser.add_argument(
         "--v2i_wifi_bandwidth_max",
         type=float,
-        default=80e6,
+        default=40e6,
         help="Maximum bandwidth for V2I WiFi communication",
     )
     return parser.parse_args()

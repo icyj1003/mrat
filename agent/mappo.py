@@ -187,14 +187,16 @@ class MAPPO:
         else:
             adjusted_rewards = rewards
 
-        active_count = int(active_agent_mask.sum().item())
-        if active_count > 0:
-            shared_reward = adjusted_rewards[active_agent_mask].mean(
-                dim=0, keepdim=True
-            )
-        else:
-            shared_reward = torch.zeros_like(adjusted_rewards[:1])
-        shared_rewards = shared_reward.expand_as(adjusted_rewards)
+        # active_count = int(active_agent_mask.sum().item())
+        # if active_count > 0:
+        #     shared_reward = adjusted_rewards[active_agent_mask].mean(
+        #         dim=0, keepdim=True
+        #     )
+        # else:
+        #     shared_reward = torch.zeros_like(adjusted_rewards[:1])
+        # shared_rewards = shared_reward.expand_as(adjusted_rewards)
+
+        shared_rewards = adjusted_rewards
 
         list_advantages = []
         list_returns = []
