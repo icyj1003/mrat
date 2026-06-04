@@ -30,6 +30,8 @@ from utils import aggregate_metrics, get_environment, get_logger, log_and_collec
 if __name__ == "__main__":
     args = parse_args()
 
+    print(f"Running with configuration: {args}")
+
     if args.cuda and not torch.cuda.is_available():
         print("CUDA was requested but is not available. Falling back to CPU.")
 
@@ -172,14 +174,11 @@ if __name__ == "__main__":
                 env.masks, dtype=torch.float32, device=args.device
             )
 
-            if args.delivery_policy in ["mappo", "drl_selective"]:
-                actions, log_probs = delivery_model.act(state_tensor, mask_tensor)
-            else:
-                actions, log_probs = delivery_model.act(
-                    state_tensor,
-                    mask_tensor,
-                    projection=env.bandwidth_constraints_handler,
-                )
+            actions, log_probs = delivery_model.act(
+                state_tensor,
+                mask_tensor,
+                projection=env.bandwidth_constraints_handler,
+            )
 
             reshaped_actions = actions.view(args.num_vehicles, env.num_rats)
 
