@@ -78,6 +78,8 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
             state_dim=env.state_dim,
             hidden_dim=args.hidden_dim,
             lr=args.lr,
+            actor_lr=(args.actor_lr if hasattr(args, "actor_lr") else None),
+            critic_lr=(args.critic_lr if hasattr(args, "critic_lr") else None),
             num_epochs=args.num_epoch,
             clip_range=args.clip_range,
             gamma=args.gamma,
@@ -140,6 +142,8 @@ class RATSelection(DeliveryPolicy):
             state_dim=env.state_dim,
             hidden_dim=args.hidden_dim,
             lr=args.lr,
+            actor_lr=(args.actor_lr if hasattr(args, "actor_lr") else None),
+            critic_lr=(args.critic_lr if hasattr(args, "critic_lr") else None),
             num_epochs=args.num_epoch,
             clip_range=args.clip_range,
             gamma=args.gamma,
@@ -723,7 +727,10 @@ class GreedyDeliveryPolicy(DeliveryPolicy):
                 path_loss_model="micro",
             )
 
-            if self.env.cache[int(self.env.local_of[vehicle_index]), requested_item] == 1:
+            if (
+                self.env.cache[int(self.env.local_of[vehicle_index]), requested_item]
+                == 1
+            ):
                 transferred_segment = np.floor(
                     data_rate * self.env.dt / self.env.code_size
                 )
@@ -732,9 +739,9 @@ class GreedyDeliveryPolicy(DeliveryPolicy):
 
             hop_distance = 99
             for edge_index in range(self.env.num_edges):
-                if self.env.cache[edge_index, requested_item] == 1 and edge_index != int(
-                    self.env.local_of[vehicle_index]
-                ):
+                if self.env.cache[
+                    edge_index, requested_item
+                ] == 1 and edge_index != int(self.env.local_of[vehicle_index]):
                     hop_distance = min(
                         hop_distance,
                         abs(edge_index - int(self.env.local_of[vehicle_index])),
@@ -786,7 +793,10 @@ class GreedyDeliveryPolicy(DeliveryPolicy):
                 path_loss_model="micro",
             )
 
-            if self.env.cache[int(self.env.local_of[vehicle_index]), requested_item] == 1:
+            if (
+                self.env.cache[int(self.env.local_of[vehicle_index]), requested_item]
+                == 1
+            ):
                 transferred_segment = np.floor(
                     data_rate * self.env.dt / self.env.code_size
                 )
@@ -795,9 +805,9 @@ class GreedyDeliveryPolicy(DeliveryPolicy):
 
             hop_distance = 99
             for edge_index in range(self.env.num_edges):
-                if self.env.cache[edge_index, requested_item] == 1 and edge_index != int(
-                    self.env.local_of[vehicle_index]
-                ):
+                if self.env.cache[
+                    edge_index, requested_item
+                ] == 1 and edge_index != int(self.env.local_of[vehicle_index]):
                     hop_distance = min(
                         hop_distance,
                         abs(edge_index - int(self.env.local_of[vehicle_index])),
@@ -876,7 +886,9 @@ class GreedyDeliveryPolicy(DeliveryPolicy):
         if enabled_rate >= target_rate:
             return actions, enabled_rate
 
-        for _, data_rate, rat_index in sorted(candidate_links, key=lambda item: item[0]):
+        for _, data_rate, rat_index in sorted(
+            candidate_links, key=lambda item: item[0]
+        ):
             actions[rat_index] = 1
             enabled_rate += data_rate
             if enabled_rate >= target_rate:
@@ -890,10 +902,15 @@ class GreedyDeliveryPolicy(DeliveryPolicy):
         masks_np = self._to_numpy(masks)
         actions = np.zeros((self.num_vehicles, self.num_rats), dtype=np.int64)
 
-        urgencies = np.array([self._vehicle_urgency(i) for i in range(self.num_vehicles)])
+        urgencies = np.array(
+            [self._vehicle_urgency(i) for i in range(self.num_vehicles)]
+        )
         sorted_vehicle_indices = list(np.argsort(-urgencies))
 
-        if len(sorted_vehicle_indices) == 0 or urgencies[sorted_vehicle_indices[0]] <= 0:
+        if (
+            len(sorted_vehicle_indices) == 0
+            or urgencies[sorted_vehicle_indices[0]] <= 0
+        ):
             valid_actions = torch.tensor(actions, dtype=torch.long)
             log_probs = torch.zeros_like(valid_actions, dtype=torch.float32)
             return valid_actions, log_probs

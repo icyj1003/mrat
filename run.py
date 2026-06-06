@@ -29,6 +29,7 @@ from utils import aggregate_metrics, get_environment, get_logger, log_and_collec
 if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
+    print(f"Running with args: {args}")
 
     if args.cuda and not torch.cuda.is_available():
         print("CUDA was requested but is not available. Falling back to CPU.")
@@ -106,6 +107,7 @@ if __name__ == "__main__":
     # evaluation metrics tracking
     infos = []
     workload = {}
+    action_track = {}
 
     # Begin training loop
     for episode in tqdm(range(total_episodes), desc="Running", unit="episode"):
@@ -231,6 +233,8 @@ if __name__ == "__main__":
 
         # update workload
         workload.update({episode: env.load_ratios_track})
+        if episode >= total_episodes - args.evaluation_episodes:
+            action_track.update({episode: env.action_track})
 
         # Collect episode information
         infos.append(
@@ -262,6 +266,7 @@ if __name__ == "__main__":
             "evaluate": evaluate,
             "infos": infos,
             "workload": workload,
+            "action_track": action_track,
         },
         f"runs/{current}_{args.name}/model.pth",  # Save the model with the current time and name
     )

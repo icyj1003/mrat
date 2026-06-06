@@ -17,6 +17,8 @@ class MAPPO:
         state_dim,
         hidden_dim=64,
         lr=3e-4,
+        actor_lr=None,
+        critic_lr=None,
         num_epochs=10,
         clip_range=0.2,
         gamma=0.99,
@@ -61,10 +63,14 @@ class MAPPO:
         self.critic = Critic(state_dim, hidden_dim).to(device)
         self.critic_target = deepcopy(self.critic)
 
+        # allow separate learning rates for actor and critic while maintaining backward compatibility
+        _actor_lr = actor_lr if actor_lr is not None else self.lr
+        _critic_lr = critic_lr if critic_lr is not None else self.lr
+
         self.optimizer = torch.optim.Adam(
             [
-                {"params": self.actor.parameters(), "lr": self.lr},
-                {"params": self.critic.parameters(), "lr": self.lr},
+                {"params": self.actor.parameters(), "lr": _actor_lr},
+                {"params": self.critic.parameters(), "lr": _critic_lr},
             ]
         )
 

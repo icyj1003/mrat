@@ -204,6 +204,8 @@ class Environment:
         self.hit_ratio_track = []
         self.rewards_track = []
         self.load_ratios_track = []
+        self.action_track = []
+        self.segments_classification_track = []
         self.reset_mobility()
         self.reset_request()
         self.set_states()
@@ -768,6 +770,9 @@ class Environment:
         use_v2i = np.zeros(self.num_vehicles)
         hit_v2i = np.zeros(self.num_vehicles)
         self.old_done = self.delivery_done.sum()
+        segments_classification = np.zeros(
+            (self.num_vehicles, 4 + 4)  # default
+        )  # 4 RATs + 2 remote to local -> wifi/pc5 -> vehicle + 2 bs to edge to local -> wifi/pc5 -> vehicle
 
         # convert torch tensor to numpy array
         if isinstance(actions, torch.Tensor):
@@ -809,6 +814,7 @@ class Environment:
 
                 # accumulate the collected segments
                 new_collected[vehicle_index] += v2n_transfered_segment
+                segments_classification[vehicle_index, 0] += v2n_transfered_segment
 
                 # accumulate the cost
                 new_cost[vehicle_index] += (
@@ -860,6 +866,7 @@ class Environment:
 
                     # accumulate the collected segments
                     new_collected[vehicle_index] += v2v_transfered_segment
+                    segments_classification[vehicle_index, 1] += v2v_transfered_segment
 
                     # accumulate the cost
                     new_cost[vehicle_index] += (
@@ -895,6 +902,9 @@ class Environment:
                         self.v2i_pc5_cost * v2i_pc5_transfered_segment * self.code_size
                     )
                     hit_v2i[vehicle_index] = 1
+                    segments_classification[
+                        vehicle_index, 2
+                    ] += v2i_pc5_transfered_segment
                 # if the edge does not have the requested item
                 else:
                     # check for the nearest neighbor edge (by hop count) that has the requested item
@@ -926,6 +936,12 @@ class Environment:
                             * (self.i2i_cost + self.v2i_pc5_cost)
                         )
                         hit_v2i[vehicle_index] = 1
+                        segments_classification[
+                            vehicle_index, 2
+                        ] += v2i_pc5_transfered_segment
+                        segments_classification[
+                            vehicle_index, 4
+                        ] += v2i_pc5_transfered_segment
 
                     # if there is no neighbor edge that has the requested item, use backhaul link
                     else:
@@ -941,6 +957,12 @@ class Environment:
                             * self.code_size
                             * (self.i2n_cost + self.v2i_pc5_cost)
                         )
+                        segments_classification[
+                            vehicle_index, 2
+                        ] += v2i_pc5_transfered_segment
+                        segments_classification[
+                            vehicle_index, 5
+                        ] += v2i_pc5_transfered_segment
 
                 # accumulate the collected segments
                 new_collected[vehicle_index] += v2i_pc5_transfered_segment
@@ -980,6 +1002,9 @@ class Environment:
                             * self.code_size
                         )
                         hit_v2i[vehicle_index] = 1
+                        segments_classification[
+                            vehicle_index, 3
+                        ] += v2i_wifi_transfered_segment
                     # if the edge does not have the requested item
                     else:
                         # check for the nearest neighbor edge (by hop count) that has the requested item
@@ -1011,6 +1036,12 @@ class Environment:
                                 * (self.i2i_cost + self.v2i_wifi_cost)
                             )
                             hit_v2i[vehicle_index] = 1
+                            segments_classification[
+                                vehicle_index, 3
+                            ] += v2i_wifi_transfered_segment
+                            segments_classification[
+                                vehicle_index, 6
+                            ] += v2i_wifi_transfered_segment
 
                         # if there is no neighbor edge that has the requested item, use backhaul link
                         else:
@@ -1029,6 +1060,12 @@ class Environment:
                                 * v2i_wifi_transfered_segment
                                 * self.code_size
                             )
+                            segments_classification[
+                                vehicle_index, 3
+                            ] += v2i_wifi_transfered_segment
+                            segments_classification[
+                                vehicle_index, 7
+                            ] += v2i_wifi_transfered_segment
 
                     # accumulate the collected segments
                     new_collected[vehicle_index] += v2i_wifi_transfered_segment
@@ -1062,6 +1099,12 @@ class Environment:
 
         # Track the utility
         self.utility_track.append(actions)
+
+        # Track the selected actions for this small step
+        self.action_track.append(actions.copy())
+
+        # Track the collected-segment path classification for this step
+        self.segments_classification_track.append(segments_classification)
 
         # Track the hit ratio
         self.hit_ratio_track.append(

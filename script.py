@@ -71,21 +71,6 @@ def l_removal():
 def deadline():
     cache, delivery = get_candidate(opts.code)
     cmds = [
-        # "python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}".format(
-        #     cache=cache, delivery=delivery
-        # ),
-        # "python run.py --delivery_deadline_min 40 --delivery_deadline_max 120 --name dl40-120-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-        #     cache=cache, delivery=delivery, cuda=cuda_flag()
-        # ),
-        # "python run.py --delivery_deadline_min 30 --delivery_deadline_max 90 --name dl30-90-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-        #     cache=cache, delivery=delivery, cuda=cuda_flag()
-        # ),
-        # "python run.py --delivery_deadline_min 20 --delivery_deadline_max 60 --name dl20-60-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-        #     cache=cache, delivery=delivery, cuda=cuda_flag()
-        # ),
-        # "python run.py --delivery_deadline_min 10 --delivery_deadline_max 30 --name dl10-30-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
-        #     cache=cache, delivery=delivery, cuda=cuda_flag()
-        # ),
         "python run.py --delivery_deadline_min 20 --delivery_deadline_max 40 --name dl20-40-{cache}-{delivery} --cache_policy {cache} --delivery_policy {delivery}{cuda}".format(
             cache=cache, delivery=delivery, cuda=cuda_flag()
         ),
@@ -134,21 +119,6 @@ def cache_policy():
         os.system(cmd)
 
 
-def workload():
-    v2n_bandwidth_max = [10e7, 5e7, 25e6, 10e6, 5e6]
-    v2v_bandwidth_max = [10e7, 5e7, 25e6, 10e6, 5e6]
-    v2i_pc5_bandwidth_max = [2e7, 1e7, 5e6, 2e6, 1e6]
-    v2i_wifi_bandwidth_max = [8e7, 4e7, 2e7, 1e7, 5e6]
-    cmds = []
-    cache, delivery = get_candidate(opts.code)
-    for i in range(1, len(v2n_bandwidth_max) - 1):
-        cmd = f"python run.py --v2n_bandwidth_max {v2n_bandwidth_max[i]} --v2v_bandwidth_max {v2v_bandwidth_max[i]} --v2i_pc5_bandwidth_max {v2i_pc5_bandwidth_max[i]} --v2i_wifi_bandwidth_max {v2i_wifi_bandwidth_max[i]} --name workload_{i}_{cache}_{delivery}{cuda_flag()} --cache_policy {cache} --delivery_policy {delivery}"
-        cmds.append(cmd)
-
-    for cmd in cmds:
-        os.system(cmd)
-
-
 args = ArgumentParser()
 args.add_argument(
     "--v_scaling", action="store_true", help="Run vehicle scaling experiments"
@@ -177,8 +147,6 @@ args.add_argument(
     help="Reverse the order of scaling (for v_scaling)",
 )
 
-args.add_argument("--workload", action="store_true", help="Run workload experiments")
-
 args.add_argument("--cuda", action="store_true", help="Run models on CUDA")
 opts = args.parse_args()
 
@@ -196,6 +164,3 @@ if opts.deadline:
 
 if opts.item_size:
     item_size()
-
-if opts.workload:
-    workload()

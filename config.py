@@ -32,13 +32,25 @@ def parse_args():
     parser.add_argument(
         "--small_train_per_n_steps",
         type=int,
-        default=512,
+        default=256,
         help="Steps per batch for the delivery",
     )
     parser.add_argument(
         "--hidden_dim", type=int, default=256, help="Hidden dimension size"
     )
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument(
+        "--actor_lr",
+        type=float,
+        default=3e-4,
+        help="Actor learning rate (overrides --lr if set)",
+    )
+    parser.add_argument(
+        "--critic_lr",
+        type=float,
+        default=1e-3,
+        help="Critic learning rate (overrides --lr if set)",
+    )
     parser.add_argument("--num_epoch", type=int, default=5, help="Number of epochs")
     parser.add_argument(
         "--clip_range",

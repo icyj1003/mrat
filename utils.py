@@ -11,6 +11,23 @@ def log_and_collect(writer, env, episode):
     # cumulative_reward
     cumulative_reward = np.sum(env.rewards_track)
 
+    # average activated links per vehicle per step
+    # only compute upto vehicle delay
+    activated_link_history = np.array(env.utility_track)
+    avg_activated_links = 0
+    for idx, vehicle_delay in enumerate(env.delay):
+        avg_activated_links += (
+            activated_link_history[: int(vehicle_delay), idx, :].sum(axis=-1).mean()
+        ) / env.num_vehicles
+
+    # total collected segments by RAT / path type
+    segment_history = np.array(env.segments_classification_track)
+    segment_totals = (
+        np.sum(segment_history, axis=(0, 1))
+        if segment_history.size > 0
+        else np.zeros(8)
+    )
+
     # delay per segment
     delay_per_segment = (
         np.mean(env.delay / env.num_code_min[env.requested]) * 1000
@@ -35,6 +52,12 @@ def log_and_collect(writer, env, episode):
 
     # v2v hit-ratio
     hit_rate = env.compute_hit_ratio()
+
+    writer.add_scalar(
+        f"log/avg_activated_links",
+        avg_activated_links,
+        episode,
+    )
 
     writer.add_scalar(
         f"log/cumulative_reward",
@@ -88,6 +111,47 @@ def log_and_collect(writer, env, episode):
     )
 
     writer.add_scalar(
+        f"log/segments_v2n",
+        segment_totals[0],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/segments_v2v",
+        segment_totals[1],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/segments_v2i_pc5",
+        segment_totals[2],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/segments_v2i_wifi",
+        segment_totals[3],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/segments_v2i_pc5_remote_to_local",
+        segment_totals[4],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/segments_v2i_pc5_bs_to_edge_to_local",
+        segment_totals[5],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/segments_v2i_wifi_remote_to_local",
+        segment_totals[6],
+        episode,
+    )
+    writer.add_scalar(
+        f"log/segments_v2i_wifi_bs_to_edge_to_local",
+        segment_totals[7],
+        episode,
+    )
+
+    writer.add_scalar(
         f"log/mean_deadline_violation",
         mean_deadline_violation,
         episode,
@@ -95,6 +159,7 @@ def log_and_collect(writer, env, episode):
 
     return {
         "cumulative_reward": cumulative_reward,
+        "avg_activated_links": avg_activated_links,
         "episode_length": episode_length,
         "delay_per_segment": delay_per_segment,
         "cost_per_bit": cost_per_bit,
@@ -105,6 +170,14 @@ def log_and_collect(writer, env, episode):
         "v2i_hit_rate": hit_rate,
         "mean_deadline_violation": mean_deadline_violation,
         "violation_ratio": violation_ratio,
+        "segments_v2n": segment_totals[0],
+        "segments_v2v": segment_totals[1],
+        "segments_v2i_pc5": segment_totals[2],
+        "segments_v2i_wifi": segment_totals[3],
+        "segments_v2i_pc5_remote_to_local": segment_totals[4],
+        "segments_v2i_pc5_bs_to_edge_to_local": segment_totals[5],
+        "segments_v2i_wifi_remote_to_local": segment_totals[6],
+        "segments_v2i_wifi_bs_to_edge_to_local": segment_totals[7],
         "episode": episode,
     }
 
