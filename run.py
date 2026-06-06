@@ -221,7 +221,11 @@ if __name__ == "__main__":
                 and episode > 0
                 and delivery_model.steps % args.small_train_per_n_steps == 0
             ):
-                if episode < args.training_episodes:
+                # Only perform small-step (online) training if episodic aggregation is disabled
+                if (
+                    args.train_every_k_episodes == 0
+                    and episode < args.training_episodes
+                ):
                     delivery_model.train()
 
         workload.update({episode: env.load_ratios_track})
@@ -230,19 +234,19 @@ if __name__ == "__main__":
         # for each timestep, for each vehicle, sum the action
         # then for each vehicle sum across timesteps and divide by the vehicle delay (which is the number of timesteps it was active)
 
-        actions_track = np.array(
-            actions_track
-        )  # shape: (timesteps, num_active_vehicles, num_rats)
+        # actions_track = np.array(
+        #     actions_track
+        # )  # shape: (timesteps, num_active_vehicles, num_rats)
 
-        mean_ep_activated_links = []
-        for vehicle_id in active_indices:
-            mean_vehicle_links = np.sum(
-                actions_track[: int(env.delay[vehicle_id]), vehicle_id, :], axis=-1
-            )
-            mean_ep_activated_links.append(
-                np.mean(mean_vehicle_links) if len(mean_vehicle_links) > 0 else 0.0
-            )
-        activated_links_track.append(np.mean(mean_ep_activated_links))
+        # mean_ep_activated_links = []
+        # for vehicle_id in active_indices:
+        #     mean_vehicle_links = np.sum(
+        #         actions_track[: int(env.delay[vehicle_id]), vehicle_id, :], axis=-1
+        #     )
+        #     mean_ep_activated_links.append(
+        #         np.mean(mean_vehicle_links) if len(mean_vehicle_links) > 0 else 0.0
+        #     )
+        # activated_links_track.append(np.mean(mean_ep_activated_links))
 
         infos.append(
             log_and_collect(
@@ -253,12 +257,10 @@ if __name__ == "__main__":
         )
         infos[-1]["num_caching_vehicles"] = len(caching_vehicle)
 
-        accumulate_reward_track.append(
-            infos[-1]["cumulative_reward"] / env.active_num_vehicles
-        )
+        accumulate_reward_track.append(infos[-1]["cumulative_reward"])
 
         try:
-            window = 100
+            window = 10
             if len(accumulate_reward_track) > window:
                 moving_avg = float(np.mean(accumulate_reward_track[-window:]))
             else:
@@ -289,6 +291,59 @@ if __name__ == "__main__":
             )
 
         env.reset()
+        # Episodic GAE: compute and store episode samples, and optionally train every K episodes
+        if (
+            args.delivery_policy in ["mappo", "drl_selective"]
+            and episode < args.training_episodes
+        ):
+            # prefer direct buffer on policy, otherwise fall back to the agent's buffer
+            buf = getattr(delivery_model, "buffer", None)
+            if buf is None and hasattr(delivery_model, "agent"):
+                buf = getattr(delivery_model.agent, "buffer", None)
+
+            if buf is None:
+                print(
+                    f"[RUN] No rollout buffer found on delivery_model after episode {episode}."
+                )
+            else:
+                buf_len = len(buf)
+                if buf_len == 0:
+                    print(
+                        f"[RUN] Buffer empty after episode {episode} — nothing to store."
+                    )
+                else:
+                    # retrieve final episode trajectory from the agent buffer
+                    (
+                        states,
+                        masks,
+                        actions,
+                        log_probs,
+                        rewards,
+                        next_states,
+                        dones,
+                        violations,
+                        active_masks,
+                    ) = buf.get()
+                    # compute per-agent GAE and store
+                    delivery_model.agent.compute_and_store_episode(
+                        states,
+                        masks,
+                        actions,
+                        log_probs,
+                        rewards,
+                        next_states,
+                        dones,
+                        active_masks,
+                    )
+                    buf.clear()
+
+        # perform aggregated training every K episodes
+        if (
+            args.train_every_k_episodes > 0
+            and (episode + 1) % args.train_every_k_episodes == 0
+        ):
+            if args.delivery_policy in ["mappo", "drl_selective"]:
+                delivery_model.train_from_episodes()
 
     evaluate = aggregate_metrics(infos[-args.evaluation_episodes :])
     evaluate["num_vehicles"] = args.num_vehicles

@@ -330,6 +330,10 @@ class MAPPODeliveryPolicy(DeliveryPolicy):
     def model(self):
         return self.agent.actor.state_dict()
 
+    def train_from_episodes(self):
+        self.agent.train_from_episodes()
+        return super().train()
+
 
 class RATSelection(DeliveryPolicy):
     def __init__(self, args, env, writer=None):

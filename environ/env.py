@@ -64,7 +64,7 @@ class Environment:
         i2i_data_rate: float = 100e6,
         i2n_data_rate: float = 150e6,
         i2i_cost: float = 0.1,
-        i2n_cost: float = 8,
+        i2n_cost: float = 0.8,
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,

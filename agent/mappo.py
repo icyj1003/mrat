@@ -71,6 +71,14 @@ class MAPPO:
         )
 
         self.buffer = MARolloutBuffer(device=device)
+        # Episodic storage for aggregated training
+        self.episodic_states = []
+        self.episodic_masks = []
+        self.episodic_actions = []
+        self.episodic_old_log_probs = []
+        self.episodic_advantages = []
+        self.episodic_returns = []
+        self.episodic_active_mask = []
         self.global_step = 0
 
     def act(self, states, masks):
@@ -267,12 +275,8 @@ class MAPPO:
         )
 
         for _ in trange(self.num_epochs, desc="Epochs", leave=False):
-            avg_actor_loss, avg_entropy_loss, avg_critic_loss = (
-                0.0,
-                0.0,
-                0.0,
-            )
-            # update the actor and critic
+            avg_actor_loss = avg_entropy_loss = avg_critic_loss = 0.0
+            batch_count = 0
             for (
                 state,
                 mask,
@@ -280,45 +284,24 @@ class MAPPO:
                 old_log_prob,
                 advantage,
                 return_,
-            ) in tqdm(
-                dataloader,
-                desc=f"Mini-batch",
-                leave=False,
-            ):
-                # evaluate the policy
+            ) in tqdm(dataloader, desc="Mini-batch", leave=False):
                 new_log_prob, entropy = self.evaluate(state, mask, action)
-
-                # calculate the ratio
                 ratio = torch.exp(new_log_prob - old_log_prob)
-
-                # calculate the surrogate loss
                 surr1 = ratio * advantage
                 surr2 = (
                     torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
                     * advantage
                 )
-
-                # surrogate loss
                 surrogate_loss = -torch.min(surr1, surr2).mean()
-
-                # entropy loss
                 entropy_loss = -entropy.mean()
-
-                # critic loss
                 critic_loss = torch.nn.functional.mse_loss(self.critic(state), return_)
-
-                # total loss
                 loss = (
                     surrogate_loss
                     + self.vf_coeff * critic_loss
                     + self.entropy_coeff * entropy_loss
                 )
-
-                # update
                 self.optimizer.zero_grad()
                 loss.backward()
-
-                # clip the gradients
                 torch.nn.utils.clip_grad_norm_(
                     self.actor.parameters(), self.max_grad_norm
                 )
@@ -326,38 +309,32 @@ class MAPPO:
                     self.critic.parameters(), self.max_grad_norm
                 )
                 self.optimizer.step()
+                self.soft_update()
 
-                # log the losses
                 avg_actor_loss += surrogate_loss.item()
                 avg_entropy_loss += entropy_loss.item()
                 avg_critic_loss += critic_loss.item()
+                batch_count += 1
 
-                # soft update the target critics
-                self.soft_update()
+            if batch_count > 0:
+                avg_actor_loss /= batch_count
+                avg_entropy_loss /= batch_count
+                avg_critic_loss /= batch_count
 
-            # normalize the losses
-            avg_actor_loss /= len(dataloader)
-            avg_entropy_loss /= len(dataloader)
-            avg_critic_loss /= len(dataloader)
-
-            # log the losses
             if self.writer is not None:
                 self.writer.add_scalar(
-                    f"{self.name}_loss/actor_loss",
-                    avg_actor_loss,
-                    self.global_step,
+                    f"{self.name}_loss/actor_loss", avg_actor_loss, self.global_step
                 )
                 self.writer.add_scalar(
-                    f"{self.name}_loss/entropy_loss",
-                    avg_entropy_loss,
-                    self.global_step,
+                    f"{self.name}_loss/entropy_loss", avg_entropy_loss, self.global_step
                 )
                 self.writer.add_scalar(
-                    f"{self.name}_loss/critic_loss",
-                    avg_critic_loss,
-                    self.global_step,
+                    f"{self.name}_loss/critic_loss", avg_critic_loss, self.global_step
                 )
 
+            # print(
+            #     f"[MAPPO] Epoch {self.global_step}: actor_loss={avg_actor_loss:.6f}, entropy_loss={avg_entropy_loss:.6f}, critic_loss={avg_critic_loss:.6f}"
+            # )
             self.global_step += 1
 
         # update the penalty coefficient if using lagrangian penalty
@@ -376,6 +353,220 @@ class MAPPO:
 
         # clear the buffer
         self.buffer.clear()
+
+    def compute_and_store_episode(
+        self,
+        states,
+        masks,
+        actions,
+        log_probs,
+        rewards,
+        next_states,
+        dones,
+        active_masks,
+    ):
+        """
+        Compute per-agent GAE for a finished episode and store flattened samples
+        for later aggregated training.
+
+        Inputs are expected as tensors on any device with shapes:
+            states: num_agents x T x state_dim
+            masks: num_agents x T x num_actions x action_dim
+            actions: num_agents x T x num_actions
+            log_probs: num_agents x T x num_actions
+            rewards: num_agents x T x 1
+            next_states: num_agents x T x state_dim
+            dones: num_agents x T x 1
+            active_masks: num_agents x T x 1
+        """
+        # ensure tensors on the agent device
+        device = self.device
+        states = states.to(device)
+        masks = masks.to(device)
+        actions = actions.to(device)
+        log_probs = log_probs.to(device)
+        rewards = rewards.to(device)
+        next_states = next_states.to(device)
+        dones = dones.to(device)
+        active_masks = active_masks.to(device)
+
+        num_agents = states.size(0)
+        # compute advantages and returns per agent
+        list_advantages = []
+        list_returns = []
+        for agent_idx in range(num_agents):
+            agent_states = states[agent_idx]
+            agent_next_states = next_states[agent_idx]
+            # keep rewards and dones with trailing dim for consistency: (T,1)
+            agent_rewards = rewards[agent_idx]
+            agent_dones = dones[agent_idx]
+
+            # values for each timestep (force shape (T,1))
+            agent_values = self.critic_target(agent_states).detach().view(-1, 1)
+            next_agent_values = (
+                self.critic_target(agent_next_states).detach().view(-1, 1)
+            )
+            agent_values = torch.cat(
+                [agent_values, next_agent_values[-1].unsqueeze(0)], dim=0
+            )
+
+            agent_adv, agent_ret = self.gae(agent_rewards, agent_values, agent_dones)
+
+            # ensure (T,1) shapes
+            agent_adv = agent_adv.view(-1, 1)
+            agent_ret = agent_ret.view(-1, 1)
+
+            list_advantages.append(agent_adv)
+            list_returns.append(agent_ret)
+
+        advantages = torch.stack(list_advantages, dim=0)  # num_agents x T x 1
+        returns = torch.stack(list_returns, dim=0)
+
+        # flatten and filter by active mask
+        flat_states = states.reshape(-1, self.state_dim)
+        flat_masks = masks.reshape(-1, self.num_actions, self.action_dim)
+        flat_actions = actions.reshape(-1, self.num_actions)
+        flat_old_log_probs = log_probs.reshape(-1, self.num_actions)
+        flat_advantages = advantages.reshape(-1, 1)
+        flat_returns = returns.reshape(-1, 1)
+        flat_active = active_masks.reshape(-1).to(torch.bool)
+
+        if flat_active.sum().item() == 0:
+            if self.writer is not None:
+                print("[MAPPO] No active samples to store for this episode.")
+            else:
+                print("[MAPPO] No active samples to store for this episode.")
+            return
+
+        sel_states = flat_states[flat_active]
+        sel_masks = flat_masks[flat_active]
+        sel_actions = flat_actions[flat_active]
+        sel_old_log_probs = flat_old_log_probs[flat_active]
+        sel_advantages = flat_advantages[flat_active]
+        sel_returns = flat_returns[flat_active]
+
+        # store into episodic lists (on CPU to save GPU memory)
+        self.episodic_states.append(sel_states.cpu())
+        # print(f"[MAPPO] Stored episode samples: {sel_states.size(0)}")
+        self.episodic_masks.append(sel_masks.cpu())
+        self.episodic_actions.append(sel_actions.cpu())
+        self.episodic_old_log_probs.append(sel_old_log_probs.cpu())
+        self.episodic_advantages.append(sel_advantages.cpu())
+        self.episodic_returns.append(sel_returns.cpu())
+        self.episodic_active_mask.append(
+            torch.ones(sel_states.size(0), dtype=torch.bool)
+        )
+
+    def train_from_episodes(self, num_epochs=None, mini_batch_size=None):
+        """Aggregate stored episode samples and perform PPO updates on the shared actor/critic."""
+        if len(self.episodic_states) == 0:
+            print("[MAPPO] No episodic data to train on.")
+            return
+
+        num_epochs = num_epochs or self.num_epochs
+        mini_batch_size = mini_batch_size or self.mini_batch_size
+
+        states = torch.cat(self.episodic_states, dim=0).to(self.device)
+        masks = torch.cat(self.episodic_masks, dim=0).to(self.device)
+        actions = torch.cat(self.episodic_actions, dim=0).to(self.device)
+        old_log_probs = torch.cat(self.episodic_old_log_probs, dim=0).to(self.device)
+        advantages = torch.cat(self.episodic_advantages, dim=0).to(self.device)
+        returns = torch.cat(self.episodic_returns, dim=0).to(self.device)
+
+        # normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # print(f"[MAPPO] Training on aggregated samples: {states.size(0)} samples")
+
+        dataset = torch.utils.data.TensorDataset(
+            states, masks, actions, old_log_probs, advantages, returns
+        )
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=mini_batch_size, shuffle=True
+        )
+
+        for _ in trange(num_epochs, desc="Epochs", leave=False):
+            avg_actor_loss = avg_entropy_loss = avg_critic_loss = 0.0
+            batch_count = 0
+            for (
+                state,
+                mask,
+                action,
+                old_log_prob,
+                advantage,
+                return_,
+            ) in tqdm(dataloader, desc="Mini-batch", leave=False):
+                new_log_prob, entropy = self.evaluate(state, mask, action)
+                ratio = torch.exp(new_log_prob - old_log_prob)
+                surr1 = ratio * advantage
+                surr2 = (
+                    torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+                    * advantage
+                )
+                surrogate_loss = -torch.min(surr1, surr2).mean()
+                entropy_loss = -entropy.mean()
+                critic_loss = torch.nn.functional.mse_loss(self.critic(state), return_)
+                loss = (
+                    surrogate_loss
+                    + self.vf_coeff * critic_loss
+                    + self.entropy_coeff * entropy_loss
+                )
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.actor.parameters(), self.max_grad_norm
+                )
+                torch.nn.utils.clip_grad_norm_(
+                    self.critic.parameters(), self.max_grad_norm
+                )
+                self.optimizer.step()
+                self.soft_update()
+
+                avg_actor_loss += surrogate_loss.item()
+                avg_entropy_loss += entropy_loss.item()
+                avg_critic_loss += critic_loss.item()
+                batch_count += 1
+
+            if batch_count > 0:
+                avg_actor_loss /= batch_count
+                avg_entropy_loss /= batch_count
+                avg_critic_loss /= batch_count
+
+            # Log to TensorBoard
+            if self.writer is not None:
+                self.writer.add_scalar(
+                    f"{self.name}_loss/actor_loss", avg_actor_loss, self.global_step
+                )
+                self.writer.add_scalar(
+                    f"{self.name}_loss/entropy_loss", avg_entropy_loss, self.global_step
+                )
+                self.writer.add_scalar(
+                    f"{self.name}_loss/critic_loss", avg_critic_loss, self.global_step
+                )
+                self.writer.add_scalar(
+                    f"{self.name}_train/surrogate1_loss",
+                    surr1.mean().item(),
+                    self.global_step,
+                )
+                self.writer.add_scalar(
+                    f"{self.name}_train/surrogate2_loss",
+                    surr2.mean().item(),
+                    self.global_step,
+                )
+
+            # print(
+            #     f"[MAPPO] Aggregated Epoch {self.global_step}: actor_loss={avg_actor_loss:.6f}, entropy_loss={avg_entropy_loss:.6f}, critic_loss={avg_critic_loss:.6f}"
+            # )
+            self.global_step += 1
+
+        # clear episodic storage
+        self.episodic_states = []
+        self.episodic_masks = []
+        self.episodic_actions = []
+        self.episodic_old_log_probs = []
+        self.episodic_advantages = []
+        self.episodic_returns = []
+        self.episodic_active_mask = []
 
     def soft_update(self):
         """

@@ -34,13 +34,19 @@ def parse_args():
         "--evaluation_episodes", type=int, default=100, help="Evaluation episodes"
     )
     parser.add_argument(
-        "--mini_batch_size", type=int, default=128, help="Mini batch size"
+        "--mini_batch_size", type=int, default=512, help="Mini batch size"
     )
     parser.add_argument(
         "--large_train_per_n_eps",
         type=int,
         default=20,
         help="Steps per batch for the delivery",
+    )
+    parser.add_argument(
+        "--train_every_k_episodes",
+        type=int,
+        default=4,
+        help="Aggregate K episodes then run a training pass (0 = disabled)",
     )
     parser.add_argument(
         "--small_train_per_n_steps",
@@ -51,19 +57,19 @@ def parse_args():
     parser.add_argument(
         "--hidden_dim", type=int, default=256, help="Hidden dimension size"
     )
-    parser.add_argument("--actor_lr", type=float, default=3e-4, help="Learning rate")
-    parser.add_argument("--critic_lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--actor_lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--critic_lr", type=float, default=3e-4, help="Learning rate")
 
     parser.add_argument("--num_epoch", type=int, default=5, help="Number of epochs")
     parser.add_argument(
         "--clip_range",
         type=float,
-        default=0.2,
+        default=0.1,
         help="PPO epsilon (exploration constraint)",
     )
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument(
-        "--entropy_coeff", type=float, default=0.01, help="Entropy coefficient"
+        "--entropy_coeff", type=float, default=0.02, help="Entropy coefficient"
     )
     parser.add_argument(
         "--penalty_coeff", type=float, default=1.0, help="Penalty coefficient"
