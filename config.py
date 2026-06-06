@@ -14,19 +14,19 @@ def parse_args():
     parser.add_argument(
         "--training_episodes",
         type=int,
-        default=10000,
+        default=1000,
         help="Training episodes",
     )
     parser.add_argument(
-        "--evaluation_episodes", type=int, default=10, help="Evaluation episodes"
+        "--evaluation_episodes", type=int, default=100, help="Evaluation episodes"
     )
     parser.add_argument(
-        "--mini_batch_size", type=int, default=128, help="Mini batch size"
+        "--mini_batch_size", type=int, default=512, help="Mini batch size"
     )
     parser.add_argument(
         "--large_train_per_n_eps",
         type=int,
-        default=20,
+        default=5,
         help="Steps per batch for the delivery",
     )
     parser.add_argument(
@@ -36,10 +36,10 @@ def parse_args():
         help="Steps per batch for the delivery",
     )
     parser.add_argument(
-        "--hidden_dim", type=int, default=64, help="Hidden dimension size"
+        "--hidden_dim", type=int, default=256, help="Hidden dimension size"
     )
-    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
-    parser.add_argument("--num_epoch", type=int, default=10, help="Number of epochs")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--num_epoch", type=int, default=5, help="Number of epochs")
     parser.add_argument(
         "--clip_range",
         type=float,
@@ -66,7 +66,7 @@ def parse_args():
     parser.add_argument(
         "--delivery_deadline_min",
         type=int,
-        default=30,
+        default=10,
         help="Minimum delivery deadline",
     )
     # python run.py --delivery_deadline_min 50 --delivery_deadline_max 150 --name dl50-150
@@ -157,25 +157,25 @@ def parse_args():
     parser.add_argument(
         "--v2n_bandwidth_max",
         type=float,
-        default=1e8,
+        default=100e6,
         help="Maximum bandwidth for V2N communication",
     )
     parser.add_argument(
         "--v2v_bandwidth_max",
         type=float,
-        default=1e8,
+        default=20e6,
         help="Maximum bandwidth for V2V communication",
     )
     parser.add_argument(
         "--v2i_pc5_bandwidth_max",
         type=float,
-        default=2e7,
+        default=20e6,
         help="Maximum bandwidth for V2I PC5 communication",
     )
     parser.add_argument(
         "--v2i_wifi_bandwidth_max",
         type=float,
-        default=8e7,
+        default=40e6,
         help="Maximum bandwidth for V2I WiFi communication",
     )
     return parser.parse_args()

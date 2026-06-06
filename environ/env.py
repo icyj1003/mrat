@@ -42,17 +42,17 @@ class Environment:
         v2v_pc5_coverage: float = 100,
         # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
-        v2n_bandwidth: float = 1 * 1e6,
-        v2v_bandwidth_max: float = 100e6,
-        v2v_bandwidth: float = 1e6,
+        v2n_bandwidth: float = 5e6,
+        v2v_bandwidth_max: float = 20e6,
+        v2v_bandwidth: float = 5e6,
         v2i_pc5_bandwidth_max: float = 20e6,
-        v2i_pc5_bandwidth: float = 1e6,
+        v2i_pc5_bandwidth: float = 5e6,
         v2i_wifi_bandwidth_max: float = 80e6,
-        v2i_wifi_bandwidth: float = 5e6,
+        v2i_wifi_bandwidth: float = 10e6,
         # Transmission Cost
         v2n_cost: float = 10,
         v2i_pc5_cost: float = 1,
-        v2i_wifi_cost: float = 0.8,
+        v2i_wifi_cost: float = 0.1,
         v2v_cost: float = 0.8,
         # Transmission Power (dBm)
         v2n_transmission_power: float = 35,
@@ -62,9 +62,9 @@ class Environment:
         # Noise & Rates
         noise_power: float = -174,
         i2i_data_rate: float = 100e6,
-        i2n_data_rate: float = 150e6,
-        i2i_cost: float = 0.3,
-        i2n_cost: float = 30,
+        i2n_data_rate: float = 100e6,
+        i2i_cost: float = 0.1,
+        i2n_cost: float = 0.8,
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
@@ -1045,15 +1045,14 @@ class Environment:
         # compute cost and delay terms
         delay_term = (
             -self.delay_weight
-            * self.delay_scale
+            * self.code_size
+            * 1000
+            # * self.delay_scale
             * new_delay
             / self.item_size[self.requested]
         )  # delay per bit
         cost_term = (
-            -self.cost_weight
-            * self.cost_scale
-            * new_cost
-            / self.item_size[self.requested]
+            -self.cost_weight * new_cost / self.item_size[self.requested]
         )  # cost per bit
 
         # compute the reward, dones, and violations

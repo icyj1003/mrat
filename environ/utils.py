@@ -18,37 +18,25 @@ def zipf(num_items, alpha) -> np.ndarray:
 
 
 def compute_data_rate(
-    allocated_spectrum: float,  # in Hz
-    transmission_power: float,  # in dBm e.g., 23 dBm for V2V, 46 dBm for V2N
-    noise_power: float,  # -174 i dont know the unit but it is a constant
+    allocated_spectrum: float,
+    transmission_power: float,
+    noise_power: float,  # thermal noise PSD in dBm/Hz, typically -174
     distance: Union[float, np.ndarray],
     path_loss_model: Literal["macro", "micro"] = "macro",
 ) -> Union[float, np.ndarray]:
-    """
-    Compute the data rate based on the Shannon-Hartley theorem.
-    Args:
-        allocated_spectrum (float): Allocated spectrum in Hz.
-        transmission_power (float): Transmission power in dBm.
-        noise_power (float): Noise power in dBm.
-        distance (Union[float, np.ndarray]): Distance in meters.
-        path_loss_model (str): Path loss model, either "macro" or "micro".
-    Returns:
-        float: Data rate in bps.
-    """
     if path_loss_model == "macro":
-        path_loss = 128.1 + 37.6 * np.log10(max(distance * 1e-3, 1e-6))  # Avoid log(0)
+        path_loss = 128.1 + 37.6 * np.log10(np.maximum(distance * 1e-3, 1e-6))
     elif path_loss_model == "micro":
-        path_loss = 140.7 + 36.7 * np.log10(max(distance * 1e-3, 1e-6))
+        path_loss = 140.7 + 36.7 * np.log10(np.maximum(distance * 1e-3, 1e-6))
     else:
         raise ValueError("Invalid path loss model")
 
-    received_power = transmission_power - path_loss
-    noise_power_linear = 10 ** ((noise_power - 30) / 10)
-    received_power_linear = 10 ** ((received_power - 30) / 10)
+    received_power = transmission_power - path_loss  # dBm
 
-    # Calculate the data rate using Shannon-Hartley theorem
-    snr = max(
-        received_power_linear / noise_power_linear, 1e-9
-    )  # Avoid division by zero
-    data_rate = allocated_spectrum * np.log2(1 + snr)
-    return data_rate
+    # Scale noise PSD by bandwidth to get total noise power
+    noise_power_total_dbm = noise_power + 10 * np.log10(allocated_spectrum)
+    noise_power_linear = 10 ** ((noise_power_total_dbm - 30) / 10)  # Watts
+    received_power_linear = 10 ** ((received_power - 30) / 10)  # Watts
+
+    snr = np.maximum(received_power_linear / noise_power_linear, 1e-9)
+    return allocated_spectrum * np.log2(1 + snr)
