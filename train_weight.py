@@ -67,4 +67,4 @@ if __name__ == "__main__":
             + (" --delivery_policy drl_selective" if args.use_single else "")
         )
         print(f"Running command: {cmd}")
-        # os.system(cmd)
+        os.system(cmd)
