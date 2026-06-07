@@ -1,7 +1,8 @@
 import os
 
 VEH = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
-
+multi_weight = (0.45, 0.55)  # cost - delay
+single_weight = (0.15, 0.85)  # cost - delay
 
 import argparse
 
@@ -31,6 +32,16 @@ if __name__ == "__main__":
         cmd = (
             f"python run.py --name {run_name} --num_vehicles {num_vehicles} --cuda"
             + (" --delivery_policy drl_selective" if args.use_single else "")
+            + (
+                " --cost_weight {single_weight[0]}"
+                if args.use_single
+                else f" --cost_weight {multi_weight[0]}"
+            )
+            + (
+                " --delay_weight {single_weight[1]}"
+                if args.use_single
+                else f" --delay_weight {multi_weight[1]}"
+            )
         )
         print(f"Running command: {cmd}")
         os.system(cmd)

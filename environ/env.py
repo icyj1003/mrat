@@ -1126,7 +1126,7 @@ class Environment:
             -self.cost_weight * new_cost / self.item_size[self.requested]
         )  # cost per bit
 
-        fair_term = -self.fair_weight * jfi  # fairness term
+        fair_term = self.fair_weight * jfi  # fairness term
 
         # compute the reward, dones, and violations
         rewards = (cost_term + delay_term + fair_term).reshape(-1, 1)
