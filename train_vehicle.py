@@ -33,12 +33,12 @@ if __name__ == "__main__":
             f"python run.py --name {run_name} --num_vehicles {num_vehicles} --cuda"
             + (" --delivery_policy drl_selective" if args.use_single else "")
             + (
-                " --cost_weight {single_weight[0]}"
+                f" --cost_weight {single_weight[0]}"
                 if args.use_single
                 else f" --cost_weight {multi_weight[0]}"
             )
             + (
-                " --delay_weight {single_weight[1]}"
+                f" --delay_weight {single_weight[1]}"
                 if args.use_single
                 else f" --delay_weight {multi_weight[1]}"
             )
