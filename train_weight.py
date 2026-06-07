@@ -58,10 +58,13 @@ if __name__ == "__main__":
         WEIGHTS = WEIGHTS[::-1]
 
     for cost_weight, delay_weight in WEIGHTS:
-        run_name = f"w1_{int(cost_weight * 10)}_w2_{int(delay_weight * 10)}" + (
-            "_single" if args.use_single else ""
+        run_name = (
+            f"w1_{str(cost_weight * 10).replace('.', '')}_w2_{str(delay_weight * 10).replace('.', '')}"
+            + ("_single" if args.use_single else "")
         )
-        os.system(
+        cmd = (
             f"python run.py --name {run_name} --cost_weight {cost_weight} --delay_weight {delay_weight} --cuda"
             + (" --delivery_policy drl_selective" if args.use_single else "")
         )
+        print(f"Running command: {cmd}")
+        # os.system(cmd)
