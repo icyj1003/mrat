@@ -253,10 +253,10 @@ if __name__ == "__main__":
 
     # Aggregate the evaluation metrics
     evaluate = aggregate_metrics(infos[-args.evaluation_episodes :])
-    evaluate["num_vehicles"] = args.num_vehicles
-    evaluate["num_edges"] = args.num_edges
-    evaluate["num_items"] = args.num_items
-    evaluate["name"] = args.name
+    evaluate["num_vehicles"] = {"value": args.num_vehicles, "std": 0}
+    evaluate["num_edges"] = {"value": args.num_edges, "std": 0}
+    evaluate["num_items"] = {"value": args.num_items, "std": 0}
+    evaluate["name"] = {"value": args.name, "std": 0}
 
     # Save the model and metrics
     torch.save(
@@ -274,7 +274,12 @@ if __name__ == "__main__":
     # Print the evaluation metrics
     print(f"[{current}] Evaluation Metrics {args.name} ===========================")
     for key, value in evaluate.items():
-        print(f"{key}: {value}")
+        mean = value["value"]
+        std = value["std"]
+        if key == "name":
+            print(f"{key}: {mean}")
+        else:
+            print(f"{key}: {mean:.4f} ± {std:.4f}")
 
     # Write evaluation metrics to ./out.out
     with open("./out.out", "a") as f:
@@ -282,5 +287,10 @@ if __name__ == "__main__":
             f"[{current}] Evaluation Metrics {args.name} ===========================\n"
         )
         for key, value in evaluate.items():
-            f.write(f"{key}: {value}\n")
+            mean = value["value"]
+            std = value["std"]
+            if key == "name":
+                f.write(f"{key}: {mean}\n")
+            else:
+                f.write(f"{key}: {mean:.4f} ± {std:.4f}\n")
         f.write("\n")

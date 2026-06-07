@@ -1,5 +1,6 @@
 from collections import Counter
 import datetime
+import math
 
 import numpy as np
 
@@ -214,10 +215,25 @@ def get_environment(args):
 
 def aggregate_metrics(data):
     len_data = len(data)
+    # Aggregate counts
     out = dict(sum((Counter(d) for d in data), Counter()))
-    for k, v in out.items():
-        out[k] = float(v) / len_data
-    return out
+
+    results = {}
+    for k in out.keys():
+        values = [d.get(k, 0) for d in data]  # collect occurrences per dict
+
+        if k.startswith("segments"):
+            # For "segments*" keys, compute sum
+            total = sum(values)
+            results[k] = {"value": total, "std": 0}
+        else:
+            # For other keys, compute mean and std
+            mean_val = float(out[k]) / len_data
+            variance = sum((x - mean_val) ** 2 for x in values) / len_data
+            std_val = math.sqrt(variance)
+            results[k] = {"value": mean_val, "std": std_val}
+
+    return results
 
 
 def get_logger(args):

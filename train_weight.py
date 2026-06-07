@@ -52,6 +52,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.use_point5_weights:
+
         WEIGHTS = WEIGHTS_point5
 
     if args.from_bottom:
