@@ -14,6 +14,19 @@ WEIGHTS = [
     (1, 0),
 ]
 
+WEIGHTS_point5 = [
+    (0.05, 0.95),
+    (0.15, 0.85),
+    (0.25, 0.75),
+    (0.35, 0.65),
+    (0.45, 0.55),
+    (0.55, 0.45),
+    (0.65, 0.35),
+    (0.75, 0.25),
+    (0.85, 0.15),
+    (0.95, 0.05),
+]
+
 import argparse
 
 parser = argparse.ArgumentParser()
@@ -29,8 +42,17 @@ parser.add_argument(
     help="Enable single link transmission (i.e., only one link can be used for delivery)",
 )
 
+parser.add_argument(
+    "--use_point5_weights",
+    action="store_true",
+    help="Whether to use weights with 0.05 increments (e.g., (0.05, 0.95), (0.15, 0.85), etc.)",
+)
+
 if __name__ == "__main__":
     args = parser.parse_args()
+
+    if args.use_point5_weights:
+        WEIGHTS = WEIGHTS_point5
 
     if args.from_bottom:
         WEIGHTS = WEIGHTS[::-1]
