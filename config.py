@@ -144,6 +144,7 @@ def parse_args():
             "true_all_link",
             "cheapselect",
             "ga",
+            "fair_mappo",
         ],
     )
     parser.add_argument(

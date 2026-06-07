@@ -50,7 +50,12 @@ if __name__ == "__main__":
     env = get_environment(args)
 
     # Initialize delivery policies
-    if args.delivery_policy == "mappo":
+    if args.delivery_policy == "mappo" or args.delivery_policy == "fair_mappo":
+        if args.delivery_policy == "fair_mappo":
+            env.delay_weight = 1
+            env.fair_weight = 10
+            env.delay_weight = 0
+
         delivery_model = MAPPODeliveryPolicy(
             args,
             env,
@@ -100,7 +105,7 @@ if __name__ == "__main__":
     # Compute the total episodes: include training only for learning policies
     total_episodes = (
         (args.training_episodes + args.evaluation_episodes)
-        if args.delivery_policy in ["mappo", "drl_selective"]
+        if args.delivery_policy in ["mappo", "drl_selective", "fair_mappo"]
         else args.evaluation_episodes
     )
 
@@ -224,7 +229,7 @@ if __name__ == "__main__":
 
             # Update the delivery model only for learning policies
             if (
-                args.delivery_policy in ["mappo", "drl_selective"]
+                args.delivery_policy in ["mappo", "drl_selective", "fair_mappo"]
                 and episode > 0
                 and delivery_model.steps % args.small_train_per_n_steps == 0
             ):

@@ -54,9 +54,18 @@ def log_and_collect(writer, env, episode):
     # v2v hit-ratio
     hit_rate = env.compute_hit_ratio()
 
+    # track the fairness using Jain's Fairness Index
+    jfi = np.mean(env.jains_fairness_track)
+
     writer.add_scalar(
         f"log/avg_activated_links",
         avg_activated_links,
+        episode,
+    )
+
+    writer.add_scalar(
+        f"log/jains_fairness_index",
+        jfi,
         episode,
     )
 
@@ -163,6 +172,7 @@ def log_and_collect(writer, env, episode):
         "avg_activated_links": avg_activated_links,
         "episode_length": episode_length,
         "delay_per_segment": delay_per_segment,
+        "jains_fairness_index": jfi,
         "cost_per_bit": cost_per_bit,
         "v2n_u": v2n_u,
         "v2v_u": v2v_u,

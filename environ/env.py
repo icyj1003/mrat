@@ -76,6 +76,7 @@ class Environment:
         disable_wifi: bool = False,
         disable_pc5: bool = False,
         remove_edge_cooperation: bool = False,
+        fair_weight: float = 0.0,
     ):
         # Set core meta-parameters
         self.dt = dt
@@ -191,6 +192,8 @@ class Environment:
         self.disable_wifi = disable_wifi
         self.disable_pc5 = disable_pc5
 
+        self.fair_weight = fair_weight
+
         # Edge cooperation flag
         self.remove_edge_cooperation = remove_edge_cooperation
 
@@ -206,6 +209,7 @@ class Environment:
         self.load_ratios_track = []
         self.action_track = []
         self.segments_classification_track = []
+        self.jains_fairness_track = []
         self.reset_mobility()
         self.reset_request()
         self.set_states()
@@ -751,6 +755,30 @@ class Environment:
         self.positions[:, 0] += self.velocities * self.dt * self.direction
         self.update_mobility_status()
 
+    def compute_jains_fairness(self, delivered, eps=1e-8):
+        """
+        Deadline-aware Jain's Fairness Index.
+        Measures fairness of service completion across vehicles.
+        """
+
+        remaining_segments = self.remaining_segments.reshape(-1)
+        remaining_deadline = self.remaining_deadline.reshape(-1)
+
+        # avoid invalid cases
+        demand_rate = np.where(
+            remaining_deadline > 0,
+            remaining_segments / (remaining_deadline + eps),
+            remaining_segments,  # deadline violated → full remaining demand
+        )
+
+        x = delivered / (demand_rate + eps)
+
+        numerator = np.sum(x) ** 2
+        denominator = len(x) * np.sum(x**2) + eps
+
+        jfi = numerator / denominator
+        return jfi
+
     # Simulation Steps
     def small_step(self, actions: np.ndarray) -> None:
         """
@@ -1079,6 +1107,11 @@ class Environment:
         self.delay += new_delay
         self.collected += new_collected
 
+        # fairness: compute the deadline-aware Jain's Fairness Index
+        delivered = new_collected.reshape(-1)
+        jfi = self.compute_jains_fairness(delivered)
+        self.jains_fairness_track.append(jfi)
+
         # compute cost and delay terms
         delay_term = (
             -self.delay_weight
@@ -1088,12 +1121,15 @@ class Environment:
             * new_delay
             / self.item_size[self.requested]
         )  # delay per bit
+
         cost_term = (
             -self.cost_weight * new_cost / self.item_size[self.requested]
         )  # cost per bit
 
+        fair_term = -self.fair_weight * jfi  # fairness term
+
         # compute the reward, dones, and violations
-        rewards = (cost_term + delay_term).reshape(-1, 1)
+        rewards = (cost_term + delay_term + fair_term).reshape(-1, 1)
         dones = self.delivery_done.astype(float).reshape(-1, 1)
         violations = self.compute_deadline_violation()
 
