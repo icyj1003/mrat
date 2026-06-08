@@ -204,6 +204,7 @@ if __name__ == "__main__":
     parser.add_argument("--veh_cache_capacity", type=int, default=None)
     parser.add_argument("--rsu_cache_capacity", type=int, default=None)
     parser.add_argument("--cache_policy", type=str, default="heuristic")
+    parser.add_argument("--name", type=str, default="evaluation")
 
     args_eval = parser.parse_args()
 
@@ -215,9 +216,9 @@ if __name__ == "__main__":
     train_folder = model_path.parent.name
     eval_folder = f"eval_{train_folder}"
 
-    writer = SummaryWriter(log_dir=f"runs/{eval_folder}")
+    writer = SummaryWriter(log_dir=f"runs/{eval_folder}_{args_eval.name}")
 
-    print(f"Evaluation logs: runs/{eval_folder}")
+    print(f"Evaluation logs: runs/{eval_folder}_{args_eval.name}")
 
     checkpoint = torch.load(
         args_eval.model_path,
@@ -380,10 +381,7 @@ if __name__ == "__main__":
             "workload": workload,
             "action_track": action_track,
         },
-        args_eval.model_path.replace(
-            "model.pth",
-            "evaluation.pth",
-        ),
+        f"runs/{eval_folder}_{args_eval.name}/model.pth",
     )
 
     print(
