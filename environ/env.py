@@ -23,8 +23,8 @@ class Environment:
         road_length: float = 2000.0,
         road_width: float = 15.0,
         num_lanes: int = 4,
-        vmin: float = 8.0,
-        vmax: float = 12.0,
+        vmin: float = 5,
+        vmax: float = 14.0,
         # Content & Coding
         item_size_max: float = 500,
         item_size_min: float = 50,
@@ -55,9 +55,9 @@ class Environment:
         v2i_wifi_cost: float = 0.1,
         v2v_cost: float = 0.8,
         # Transmission Power (dBm)
-        v2n_transmission_power: float = 35,
-        v2i_pc5_transmission_power: float = 33,
-        v2i_wifi_transmission_power: float = 25,
+        v2n_transmission_power: float = 49,
+        v2i_pc5_transmission_power: float = 35,
+        v2i_wifi_transmission_power: float = 30,
         v2v_transmission_power: float = 30,
         # Noise & Rates
         noise_power: float = -174,
@@ -109,7 +109,7 @@ class Environment:
             ],
             axis=1,
         )
-        self.bs_positions = (self.road_length / 2, self.road_width / 2)
+        self.bs_positions = (self.road_length / 2, self.road_width / 2 + 500)
 
         # Content Coding
         self.code_size = code_size
@@ -525,9 +525,12 @@ class Environment:
         self.masks[self.out == 1, 2, 1] = 1
         self.masks[self.out == 1, 3, 1] = 1
 
+        self.nearby_vehicles_of = np.ones((self.num_vehicles,), dtype=int) * -1
+
         # if any nearby vehicle has the requested item and in communication range
         for vehicle_index in range(self.num_vehicles):
             any_car = False
+            nearest = float("inf")
             for nearby_vehicle_index in range(self.num_vehicles):
                 if (
                     vehicle_index != nearby_vehicle_index  # ignore self
@@ -541,7 +544,14 @@ class Environment:
                 ):
                     # if v2v is available, break the loop
                     any_car = True
-                    break
+                    if (
+                        self.vehicle_distance[vehicle_index, nearby_vehicle_index]
+                        < nearest
+                    ):
+                        nearest = self.vehicle_distance[
+                            vehicle_index, nearby_vehicle_index
+                        ]
+                        self.nearby_vehicles_of[vehicle_index] = nearby_vehicle_index
 
             if not any_car:
                 # if v2v is not available, force disable v2v (mask 1)
@@ -873,55 +883,30 @@ class Environment:
 
             # download with v2v
             if actions[vehicle_index, 1] == 1:
-                nearby_vehicles = []
+                nearby_vehicle_index = self.nearby_vehicles_of[vehicle_index]
+                if nearby_vehicle_index == -1:
+                    continue
 
-                # search all vehicles in communication range
-                nearby_vehicles = [
-                    (
-                        nearby_vehicle_index,
-                        self.vehicle_distance[vehicle_index, nearby_vehicle_index],
-                    )
-                    for nearby_vehicle_index in range(self.num_vehicles)
-                    if vehicle_index != nearby_vehicle_index
-                    and self.vehicle_distance[vehicle_index, nearby_vehicle_index]
-                    < self.v2v_pc5_coverage
-                    and self.cache[
-                        self.num_edges + nearby_vehicle_index, requested_item
-                    ]
-                    == 1
-                ]
+                # compute the v2v data rate with micro path loss model
+                data_rate = compute_data_rate(
+                    allocated_spectrum=self.v2v_bandwidth,
+                    transmission_power=self.v2v_transmission_power,
+                    noise_power=self.noise_power,
+                    distance=self.vehicle_distance[vehicle_index, nearby_vehicle_index],
+                    path_loss_model="micro",
+                )
 
-                # search nearby vehicles that have the requested item
+                # compute the number of segments that can be transfered
+                v2v_transfered_segment = np.floor(data_rate * self.dt / self.code_size)
 
-                if len(nearby_vehicles) > 0:
-                    min_distance = self.v2v_pc5_coverage
+                # accumulate the collected segments
+                new_collected[vehicle_index] += v2v_transfered_segment
+                segments_classification[vehicle_index, 1] += v2v_transfered_segment
 
-                    for nearby_vehicle_index, distance in nearby_vehicles:
-                        if distance < min_distance:
-                            min_distance = distance
-
-                    # compute the v2v data rate with micro path loss model
-                    data_rate = compute_data_rate(
-                        allocated_spectrum=self.v2v_bandwidth,
-                        transmission_power=self.v2v_transmission_power,
-                        noise_power=self.noise_power,
-                        distance=min_distance,
-                        path_loss_model="micro",
-                    )
-
-                    # compute the number of segments that can be transfered
-                    v2v_transfered_segment = np.floor(
-                        data_rate * self.dt / self.code_size
-                    )
-
-                    # accumulate the collected segments
-                    new_collected[vehicle_index] += v2v_transfered_segment
-                    segments_classification[vehicle_index, 1] += v2v_transfered_segment
-
-                    # accumulate the cost
-                    new_cost[vehicle_index] += (
-                        self.v2v_cost * v2v_transfered_segment * self.code_size
-                    )
+                # accumulate the cost
+                new_cost[vehicle_index] += (
+                    self.v2v_cost * v2v_transfered_segment * self.code_size
+                )
 
             # download with v2i pc5 and vehicle is not out of the road
             if actions[vehicle_index, 2] == 1 and self.out[vehicle_index] == 0:

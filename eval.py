@@ -232,7 +232,7 @@ if __name__ == "__main__":
     args.remove_edge_cooperation = args_eval.remove_edge_cooperation
 
     if args_eval.item_size is not None:
-        args.item_size_max = args_eval.item_size
+        args.item_size_max = args_eval.item_size + 1
         args.item_size_min = args_eval.item_size
 
     args.training_episodes = 0
