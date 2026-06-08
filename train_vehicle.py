@@ -36,8 +36,11 @@ if __name__ == "__main__":
         VEH = VEH[::-1]
 
     for num_vehicles in VEH:
-        run_name = f"num_vehicles_{num_vehicles}" + (
-            "_single" if args.use_single else ""
+        run_name = (
+            f"num_vehicles_{num_vehicles}"
+            + ("_single" if args.use_single else "")
+            + ("_all" if args.use_all else "")
+            + ("_random" if args.use_random else "")
         )
         cmd = (
             f"python run.py --name {run_name} --num_vehicles {num_vehicles} --cuda"

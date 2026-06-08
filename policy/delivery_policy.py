@@ -32,6 +32,9 @@ class RandomDeliveryPolicy(DeliveryPolicy):
 
     def act(self, states, masks, projection=None):
         super().act()
+        states = states.to("cpu")
+        masks = masks.to("cpu")
+
         logits = (
             torch.rand(self.num_agents, self.num_actions, self.action_dim)
             + masks * -1e10
