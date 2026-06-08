@@ -36,7 +36,7 @@ def parse_args():
         help="Steps per batch for the delivery",
     )
     parser.add_argument(
-        "--hidden_dim", type=int, default=256, help="Hidden dimension size"
+        "--hidden_dim", type=int, default=128, help="Hidden dimension size"
     )
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
     parser.add_argument(
