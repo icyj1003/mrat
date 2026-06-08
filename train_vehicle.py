@@ -1,8 +1,8 @@
 import os
 
 VEH = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
-multi_weight = (0.6, 0.4)  # cost - delay
-single_weight = (0.6, 0.4)  # cost - delay
+multi_weight = (0.55, 0.45)  # cost - delay
+single_weight = (0.65, 0.45)  # cost - delay
 
 import argparse
 
@@ -19,6 +19,16 @@ parser.add_argument(
     help="Enable single link transmission (i.e., only one link can be used for delivery)",
 )
 
+parser.add_argument(
+    "--use_all",
+    action="store_true",
+)
+
+parser.add_argument(
+    "--use_random",
+    action="store_true",
+)
+
 if __name__ == "__main__":
     args = parser.parse_args()
 
@@ -32,6 +42,8 @@ if __name__ == "__main__":
         cmd = (
             f"python run.py --name {run_name} --num_vehicles {num_vehicles} --cuda"
             + (" --delivery_policy drl_selective" if args.use_single else "")
+            + (" --delivery_policy all" if args.use_all else "")
+            + (" --delivery_policy random" if args.use_random else "")
             + (
                 f" --cost_weight {single_weight[0]}"
                 if args.use_single

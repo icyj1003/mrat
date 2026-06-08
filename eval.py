@@ -201,6 +201,9 @@ if __name__ == "__main__":
     parser.add_argument("--remove_v2n", action="store_true")
     parser.add_argument("--remove_edge_cooperation", action="store_true")
     parser.add_argument("--item_size", type=int, default=None)
+    parser.add_argument("--veh_cache_capacity", type=int, default=None)
+    parser.add_argument("--rsu_cache_capacity", type=int, default=None)
+    parser.add_argument("--cache_policy", type=str, default="heuristic")
 
     args_eval = parser.parse_args()
 
