@@ -53,8 +53,8 @@ if __name__ == "__main__":
     if args.delivery_policy == "mappo" or args.delivery_policy == "fair_mappo":
         if args.delivery_policy == "fair_mappo":
             env.delay_weight = 1
-            env.fair_weight = 10
-            env.delay_weight = 0
+            env.fair_weight = 1
+            env.cost_weight = 0
 
         delivery_model = MAPPODeliveryPolicy(
             args,

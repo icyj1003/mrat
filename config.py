@@ -115,6 +115,9 @@ def parse_args():
         "--remove_pc5", action="store_true", help="Remove PC5 communication"
     )
     parser.add_argument(
+        "--remove_v2n", action="store_true", help="Remove V2N communication"
+    )
+    parser.add_argument(
         "--cache_policy",
         type=str,
         default="heuristic",

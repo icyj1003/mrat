@@ -195,6 +195,13 @@ if __name__ == "__main__":
         default=100,
     )
 
+    parser.add_argument("--remove_pc5", action="store_true")
+    parser.add_argument("--remove_wifi", action="store_true")
+    parser.add_argument("--remove_v2v", action="store_true")
+    parser.add_argument("--remove_v2n", action="store_true")
+    parser.add_argument("--remove_edge_cooperation", action="store_true")
+    parser.add_argument("--item_size", type=int, default=None)
+
     args_eval = parser.parse_args()
 
     from pathlib import Path
@@ -216,6 +223,17 @@ if __name__ == "__main__":
     )
 
     args = checkpoint["args"]
+
+    # Override training args with evaluation args
+    args.remove_pc5 = args_eval.remove_pc5
+    args.remove_wifi = args_eval.remove_wifi
+    args.remove_v2v = args_eval.remove_v2v
+    args.remove_v2n = args_eval.remove_v2n
+    args.remove_edge_cooperation = args_eval.remove_edge_cooperation
+
+    if args_eval.item_size is not None:
+        args.item_size_max = args_eval.item_size
+        args.item_size_min = args_eval.item_size
 
     args.training_episodes = 0
     args.evaluation_episodes = args_eval.episodes
@@ -295,7 +313,6 @@ if __name__ == "__main__":
         # Small timescale
         #
         while not env.is_small_done():
-
             state_tensor = torch.tensor(
                 env.states,
                 dtype=torch.float32,

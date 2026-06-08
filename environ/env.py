@@ -64,7 +64,7 @@ class Environment:
         i2i_data_rate: float = 100e6,
         i2n_data_rate: float = 100e6,
         i2i_cost: float = 0.1,
-        i2n_cost: float = 0.8,
+        i2n_cost: float = 8,
         # Cost and Delay Scaling
         storage_cost_scale: float = 1e-2,
         delay_scale: float = 1e10,
@@ -75,6 +75,7 @@ class Environment:
         disable_v2v: bool = False,
         disable_wifi: bool = False,
         disable_pc5: bool = False,
+        disable_v2n: bool = False,
         remove_edge_cooperation: bool = False,
         fair_weight: float = 0.0,
     ):
@@ -191,7 +192,7 @@ class Environment:
         self.disable_v2v = disable_v2v
         self.disable_wifi = disable_wifi
         self.disable_pc5 = disable_pc5
-
+        self.disable_v2n = disable_v2n
         self.fair_weight = fair_weight
 
         # Edge cooperation flag
@@ -677,6 +678,11 @@ class Environment:
         if self.disable_pc5:
             self.masks[:, 2, 1] = 1
 
+        # if disable v2n
+        if self.disable_v2n:
+            self.masks[:, 0, 1] = 1
+            self.masks[:, 0, 0] = 0
+
     # Mobility Updates
     def update_mobility_status(self) -> None:
         """
@@ -763,16 +769,25 @@ class Environment:
 
         remaining_segments = self.remaining_segments.reshape(-1)
         remaining_deadline = self.remaining_deadline.reshape(-1)
+        delivery_done = self.delivery_done.reshape(-1)
 
-        # avoid invalid cases
-        demand_rate = np.where(
+        # Demand definition (deadline-aware)
+        demand = np.where(
             remaining_deadline > 0,
             remaining_segments / (remaining_deadline + eps),
-            remaining_segments,  # deadline violated → full remaining demand
+            remaining_segments,
         )
 
-        x = delivered / (demand_rate + eps)
+        # avoid invalid values
+        demand = np.maximum(demand, eps)
 
+        # satisfaction ratio
+        x = delivered / demand
+
+        # completed users are treated as fully satisfied
+        x = np.where(delivery_done == 1, 1.0, x)
+
+        # Jain's Fairness Index
         numerator = np.sum(x) ** 2
         denominator = len(x) * np.sum(x**2) + eps
 
@@ -809,6 +824,13 @@ class Environment:
         for vehicle_index in range(self.num_vehicles):
             # get the requested item index
             requested_item = np.where(self.requests_matrix[vehicle_index] == 1)[0]
+
+            if self.disable_v2n and self.out[vehicle_index] == 1:
+                self.delivery_done[vehicle_index] = 1
+                self.delay[vehicle_index] = (
+                    self.delivery_deadline[self.requested[vehicle_index]] + 1
+                )
+                continue
 
             # ignore if request has been satisfied
             if self.delivery_done[vehicle_index] == 1:
