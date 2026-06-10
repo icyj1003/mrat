@@ -48,6 +48,12 @@ parser.add_argument(
     help="Whether to use weights with 0.05 increments (e.g., (0.05, 0.95), (0.15, 0.85), etc.)",
 )
 
+parser.add_argument(
+    "--all_weights",
+    action="store_true",
+    help="Whether to use weights with 0.05 increments (e.g., (0.05, 0.95), (0.15, 0.85), etc.)",
+)
+
 if __name__ == "__main__":
     args = parser.parse_args()
 
@@ -57,6 +63,9 @@ if __name__ == "__main__":
 
     if args.from_bottom:
         WEIGHTS = WEIGHTS[::-1]
+
+    if args.all_weights:
+        WEIGHTS = WEIGHTS + WEIGHTS_point5
 
     for cost_weight, delay_weight in WEIGHTS:
         run_name = (
