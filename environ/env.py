@@ -703,6 +703,15 @@ class Environment:
             (self.positions[:, 0] > self.road_length) | (self.positions[:, 0] < 0), 1, 0
         )
 
+        # if vehicle is out, set it back to the beginning of the road
+        self.positions[self.out == 1, 0] = np.where(
+            self.direction[self.out == 1] == 1, 0, self.road_length
+        )
+
+        self.out = np.where(
+            (self.positions[:, 0] > self.road_length) | (self.positions[:, 0] < 0), 1, 0
+        )
+
         # Extract x-coordinates
         vehicle_x = self.positions[:, 0]
         segment_length = self.road_length / self.num_edges
