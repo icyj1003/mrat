@@ -203,8 +203,9 @@ if __name__ == "__main__":
     parser.add_argument("--item_size", type=int, default=None)
     parser.add_argument("--veh_cache_capacity", type=int, default=None)
     parser.add_argument("--rsu_cache_capacity", type=int, default=None)
-    parser.add_argument("--cache_policy", type=str, default="heuristic")
+    parser.add_argument("--cache_policy", type=str, default=None)
     parser.add_argument("--name", type=str, default="evaluation")
+    parser.add_argument("--deadline", type=int, default=None)
 
     args_eval = parser.parse_args()
 
@@ -218,8 +219,6 @@ if __name__ == "__main__":
 
     writer = SummaryWriter(log_dir=f"runs/{eval_folder}_{args_eval.name}")
 
-    print(f"Evaluation logs: runs/{eval_folder}_{args_eval.name}")
-
     checkpoint = torch.load(
         args_eval.model_path,
         map_location="cpu",
@@ -227,6 +226,9 @@ if __name__ == "__main__":
     )
 
     args = checkpoint["args"]
+    args.name = args_eval.name
+
+    print(f"Evaluation logs: runs/{eval_folder}_{args_eval.name}")
 
     # Override training args with evaluation args
     args.remove_pc5 = args_eval.remove_pc5
@@ -235,9 +237,16 @@ if __name__ == "__main__":
     args.remove_v2n = args_eval.remove_v2n
     args.remove_edge_cooperation = args_eval.remove_edge_cooperation
 
+    if args_eval.cache_policy is not None:
+        args.cache_policy = args_eval.cache_policy
+
     if args_eval.item_size is not None:
         args.item_size_max = args_eval.item_size + 1
         args.item_size_min = args_eval.item_size
+
+    if args_eval.deadline is not None:
+        args.delivery_deadline_min = args_eval.deadline
+        args.delivery_deadline_max = args_eval.deadline + 1
 
     args.training_episodes = 0
     args.evaluation_episodes = args_eval.episodes
@@ -255,6 +264,12 @@ if __name__ == "__main__":
         torch.cuda.manual_seed_all(args.seed)
 
     env = get_environment(args)
+
+    if args_eval.veh_cache_capacity is not None:
+        env.vehicle_capacity = args_eval.veh_cache_capacity
+
+    if args_eval.rsu_cache_capacity is not None:
+        env.edge_capacity = args_eval.rsu_cache_capacity
 
     delivery_model = build_delivery_model(
         args,
@@ -380,6 +395,7 @@ if __name__ == "__main__":
             "infos": infos,
             "workload": workload,
             "action_track": action_track,
+            "name": args_eval.name,
         },
         f"runs/{eval_folder}_{args_eval.name}/model.pth",
     )

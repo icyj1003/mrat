@@ -2,7 +2,7 @@ import os
 
 VEH = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 multi_weight = (0.55, 0.45)  # cost - delay
-single_weight = (0.55, 0.45)  # cost - delay
+single_weight = (0.3, 0.7)  # cost - delay
 
 import argparse
 

@@ -87,7 +87,7 @@ def parse_args():
     parser.add_argument(
         "--delivery_deadline_max",
         type=int,
-        default=60,
+        default=30,
         help="Maximum delivery deadline",
     )
     parser.add_argument(
