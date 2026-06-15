@@ -179,7 +179,7 @@ def parse_args():
     parser.add_argument(
         "--v2v_bandwidth_max",
         type=float,
-        default=20e6,
+        default=200e6,
         help="Maximum bandwidth for V2V communication",
     )
     parser.add_argument(

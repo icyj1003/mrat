@@ -32,8 +32,8 @@ class Environment:
         delivery_deadline_max: float = 300,
         delivery_deadline_min: float = 100,
         # Storage
-        edge_capacity: float = 2 * 1024,
-        vehicle_capacity: float = 0.5 * 1024,
+        edge_capacity: float = 4 * 1024,
+        vehicle_capacity: float = 1 * 1024,
         edge_cost: float = 1,
         vehicle_cost: float = 3,
         # Coverage (in meters)
@@ -43,8 +43,8 @@ class Environment:
         # Bandwidth (bps)
         v2n_bandwidth_max: float = 100e6,
         v2n_bandwidth: float = 5e6,
-        v2v_bandwidth_max: float = 20e6,
-        v2v_bandwidth: float = 5e6,
+        v2v_bandwidth_max: float = 200e6,
+        v2v_bandwidth: float = 10e6,
         v2i_pc5_bandwidth_max: float = 20e6,
         v2i_pc5_bandwidth: float = 5e6,
         v2i_wifi_bandwidth_max: float = 80e6,
@@ -61,7 +61,7 @@ class Environment:
         v2v_transmission_power: float = 30,
         # Noise & Rates
         noise_power: float = -174,
-        i2i_data_rate: float = 100e6,
+        i2i_data_rate: float = 150e6,
         i2n_data_rate: float = 100e6,
         i2i_cost: float = 0.1,
         i2n_cost: float = 8,
@@ -293,7 +293,9 @@ class Environment:
 
         # Calculate y-coordinates based on lane indices and lane spacing
         lane_indices = self.np_random.randint(0, self.num_lanes, size=self.num_vehicles)
-        self.direction = np.where(lane_indices < self.num_lanes / 2, -1, 1)
+        self.direction = np.ones(
+            self.num_vehicles
+        )  # assuming all vehicles move in the same direction
 
         # Optional: Generate x coordinates based on the direction of the lanes
         # x = np.where(lane_indices < self.num_lanes / 2, self.road_length, 0)
