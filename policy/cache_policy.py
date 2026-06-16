@@ -78,6 +78,7 @@ def non_redundant_cache_placement(
     use_deadline=True,
     use_popularity=True,
     use_size=True,
+    priority="veh",
 ):
     """
     Generate split cache matrices for vehicles and RSUs without redundancy.
@@ -127,32 +128,60 @@ def non_redundant_cache_placement(
         sorted_indices = np.argsort(-utility)
         used_items = np.zeros(num_items, dtype=bool)
 
-        for vehicle_index in selected_vehicles_by_edge[edge]:
-            remaining_capacity = env.vehicle_capacity
+        # if priority == "veh", fill vehicle caches first, otherwise fill RSU cache first
+
+        if priority == "veh":
+            for vehicle_index in selected_vehicles_by_edge[edge]:
+                remaining_capacity = env.vehicle_capacity
+                for idx in sorted_indices:
+                    if used_items[idx]:
+                        continue
+                    if sizes[idx] <= remaining_capacity:
+                        vehicle_cache[vehicle_index, idx] = 1
+                        used_items[idx] = True
+                        remaining_capacity -= sizes[idx]
+                    if remaining_capacity <= 0:
+                        break
+
+            remaining_capacity = (
+                env.edge_capacity
+                if np.isscalar(env.edge_capacity)
+                else env.edge_capacity[edge]
+            )
             for idx in sorted_indices:
                 if used_items[idx]:
                     continue
                 if sizes[idx] <= remaining_capacity:
-                    vehicle_cache[vehicle_index, idx] = 1
+                    rsu_cache[edge, idx] = 1
+                    used_items[idx] = True
+                    remaining_capacity -= sizes[idx]
+                if remaining_capacity <= 0:
+                    break
+        else:
+            remaining_capacity = (
+                env.edge_capacity
+                if np.isscalar(env.edge_capacity)
+                else env.edge_capacity[edge]
+            )
+            for idx in sorted_indices:
+                if sizes[idx] <= remaining_capacity:
+                    rsu_cache[edge, idx] = 1
                     used_items[idx] = True
                     remaining_capacity -= sizes[idx]
                 if remaining_capacity <= 0:
                     break
 
-        remaining_capacity = (
-            env.edge_capacity
-            if np.isscalar(env.edge_capacity)
-            else env.edge_capacity[edge]
-        )
-        for idx in sorted_indices:
-            if used_items[idx]:
-                continue
-            if sizes[idx] <= remaining_capacity:
-                rsu_cache[edge, idx] = 1
-                used_items[idx] = True
-                remaining_capacity -= sizes[idx]
-            if remaining_capacity <= 0:
-                break
+            for vehicle_index in selected_vehicles_by_edge[edge]:
+                remaining_capacity = env.vehicle_capacity
+                for idx in sorted_indices:
+                    if used_items[idx]:
+                        continue
+                    if sizes[idx] <= remaining_capacity:
+                        vehicle_cache[vehicle_index, idx] = 1
+                        used_items[idx] = True
+                        remaining_capacity -= sizes[idx]
+                    if remaining_capacity <= 0:
+                        break
 
     return vehicle_cache, rsu_cache
 

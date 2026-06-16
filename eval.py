@@ -175,6 +175,17 @@ def cache_placement(args, env, caching_vehicle):
             cache_actions,
             vehicle_cache_actions,
         )
+    elif args.cache_policy == "split_non_redundant_rsu":
+        vehicle_cache_actions, cache_actions = non_redundant_cache_placement(
+            env,
+            caching_vehicle,
+            priority="rsu",
+        )
+
+        return (
+            cache_actions,
+            vehicle_cache_actions,
+        )
 
     raise ValueError(f"Unknown cache policy: {args.cache_policy}")
 

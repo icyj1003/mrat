@@ -132,6 +132,7 @@ def parse_args():
             "heuristic_no_deadline_size",
             "heuristic_no_popularity_size",
             "split_non_redundant",
+            "split_non_redundant_rsu",
         ],
     )
     parser.add_argument(
