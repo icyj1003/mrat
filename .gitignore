@@ -1,8 +1,6 @@
 __pycache__
-note.md
-runs
 venv
-out.out
 .vscode
-out.csv
-temp*
+.conda
+.claude
+.output

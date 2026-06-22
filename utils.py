@@ -1,11 +1,11 @@
-from collections import Counter
 import datetime
 import math
+from collections import Counter
 
 import numpy as np
+from torch.utils.tensorboard import SummaryWriter
 
 from environ import Environment
-from torch.utils.tensorboard import SummaryWriter
 
 
 def log_and_collect(writer, env, episode):
@@ -247,5 +247,5 @@ def aggregate_metrics(data):
 
 def get_logger(args):
     current = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    writer = SummaryWriter(log_dir=f"runs/{current}_{args.name}")
+    writer = SummaryWriter(log_dir=f"./.output/runs/{current}_{args.name}")
     return current, writer

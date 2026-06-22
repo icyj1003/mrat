@@ -9,14 +9,14 @@ from policy.cache_policy import (
     random_cache_placement,
 )
 from policy.delivery_policy import (
+    GA,
     AllLinkDeliveryPolicy,
+    CheapSel,
     GreedyDeliveryPolicy,
     MAPPODeliveryPolicy,
     RandomDeliveryPolicy,
     RATSelection,
     TrueAllLink,
-    CheapSel,
-    GA,
 )
 from policy.selection_policy import (
     GTVS,
@@ -273,7 +273,7 @@ if __name__ == "__main__":
             "workload": workload,
             "action_track": action_track,
         },
-        f"runs/{current}_{args.name}/model.pth",  # Save the model with the current time and name
+        f"./.output/runs/{current}_{args.name}/model.pth",  # Save the model with the current time and name
     )
 
     # Print the evaluation metrics
@@ -287,7 +287,7 @@ if __name__ == "__main__":
             print(f"{key}: {mean:.4f} ± {std:.4f}")
 
     # Write evaluation metrics to ./out.out
-    with open("./out.out", "a") as f:
+    with open(f"./.output/runs/{current}_{args.name}/out.out", "a") as f:
         f.write(
             f"[{current}] Evaluation Metrics {args.name} ===========================\n"
         )

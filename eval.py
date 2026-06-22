@@ -408,7 +408,7 @@ if __name__ == "__main__":
             "action_track": action_track,
             "name": args_eval.name,
         },
-        f"runs/{eval_folder}_{args_eval.name}/model.pth",
+        f"./.output/runs/{eval_folder}_{args_eval.name}/model.pth",
     )
 
     print(
