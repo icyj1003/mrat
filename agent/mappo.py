@@ -327,7 +327,7 @@ class MAPPO:
             self.global_step += 1
 
         # update the penalty coefficient if using lagrangian penalty
-        if self.use_lagrange and False:
+        if self.use_lagrange:
             self.penalty_coeff += self.penalty_lr * (violations.mean()).detach()
             self.penalty_coeff = max(0, min(self.penalty_coeff, 10))
 
