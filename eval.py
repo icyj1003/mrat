@@ -217,6 +217,7 @@ if __name__ == "__main__":
     parser.add_argument("--cache_policy", type=str, default=None)
     parser.add_argument("--name", type=str, default="evaluation")
     parser.add_argument("--deadline", type=int, default=None)
+    parser.add_argument("--num_vehicles", type=int, default=None)
 
     args_eval = parser.parse_args()
 
@@ -258,6 +259,12 @@ if __name__ == "__main__":
     if args_eval.deadline is not None:
         args.delivery_deadline_min = args_eval.deadline
         args.delivery_deadline_max = args_eval.deadline + 1
+
+    # Override the number of vehicles for scalability evaluation. The MAPPO
+    # actor is parameter-shared per-vehicle, so a model trained at one vehicle
+    # count can be evaluated at any other count without retraining.
+    if args_eval.num_vehicles is not None:
+        args.num_vehicles = args_eval.num_vehicles
 
     args.training_episodes = 0
     args.evaluation_episodes = args_eval.episodes
