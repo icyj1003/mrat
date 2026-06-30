@@ -30,7 +30,9 @@ def log_and_collect(writer, env, episode):
     )
 
     # delay per segment
-    delay_per_segment = np.mean(env.delay / env.collected) * 1000  # to ms
+    delay_per_segment = (
+        np.mean(env.delay / env.num_code_min[env.requested]) * 1000
+    )  # to ms
 
     # cost per bit
     cost_per_bit = np.nanmean(env.cost / (env.collected * env.code_size))

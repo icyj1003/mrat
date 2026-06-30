@@ -1,4 +1,5 @@
 import argparse
+import os
 import torch
 from tqdm import tqdm
 
@@ -229,7 +230,7 @@ if __name__ == "__main__":
     train_folder = model_path.parent.name
     eval_folder = f"eval_{train_folder}"
 
-    writer = SummaryWriter(log_dir=f"runs/{eval_folder}_{args_eval.name}")
+    writer = SummaryWriter(log_dir=f"./.output/runs/{eval_folder}_{args_eval.name}")
 
     checkpoint = torch.load(
         args_eval.model_path,
@@ -240,7 +241,7 @@ if __name__ == "__main__":
     args = checkpoint["args"]
     args.name = args_eval.name
 
-    print(f"Evaluation logs: runs/{eval_folder}_{args_eval.name}")
+    print(f"Evaluation logs: ./.output/runs/{eval_folder}_{args_eval.name}")
 
     # Override training args with evaluation args
     args.remove_pc5 = args_eval.remove_pc5
@@ -405,6 +406,8 @@ if __name__ == "__main__":
         std = value["std"]
 
         print(f"{key}: " f"{mean:.4f} ± {std:.4f}")
+
+    os.makedirs(f"./.output/runs/{eval_folder}_{args_eval.name}", exist_ok=True)
 
     torch.save(
         {
